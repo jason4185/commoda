@@ -3,6 +3,7 @@ import { ExecutionResult, TransactionStatus } from "genlayer-js/types";
 import type { Address } from "viem";
 import type { Connector } from "wagmi";
 import { COMMODA_CONTRACT_ADDRESS, CONTRACT_EXPLORER, GENLAYER_CHAIN, GENLAYER_RPC_ENDPOINT, requireContractAddress } from "./config";
+import type { TransactionProgressCallback } from "./transaction-types";
 
 type AnyClient = {
   readContract(args: Record<string, unknown>): Promise<unknown>;
@@ -18,7 +19,20 @@ export async function readContract(functionName: string, args: unknown[] = []) {
   return readClient().readContract({ address: requireContractAddress(), functionName, args, transactionHashVariant: "latest-nonfinal" });
 }
 
-export async function writeContract(functionName: string, args: unknown[] = [], value = 0n) {
+/**
+ * Reads a sender-sensitive public view with the selected wallet account as
+ * GenLayer's message sender. This intentionally does not require the wallet
+ * provider: public reads remain wallet-independent, while account context is
+ * supplied explicitly for views that inspect gl.message.sender_address.
+ */
+export async function readContractAsAccount(functionName: string, args: unknown[] = [], account: Address) {
+  const client = createClient({ chain: GENLAYER_CHAIN as any, endpoint: GENLAYER_RPC_ENDPOINT, account }) as unknown as AnyClient;
+  return client.readContract({ address: requireContractAddress(), functionName, args, transactionHashVariant: "latest-nonfinal" });
+}
+
+export async function writeContract(functionName: string, args: unknown[] = [], value = 0n, onProgress?: TransactionProgressCallback) {
+  onProgress?.({ stage: "preparing", method: functionName });
+  try {
   if (!activeWallet) throw new Error("Connect an injected wallet before submitting.");
   const provider = await activeWallet.connector.getProvider();
   const request = (provider as { request?: (args: { method: string; params?: unknown[] }) => Promise<unknown> }).request;
@@ -31,9 +45,13 @@ export async function writeContract(functionName: string, args: unknown[] = [], 
   if (String(chainId).toLowerCase() !== `0x${GENLAYER_CHAIN.id.toString(16)}`) {
     throw new Error("Wrong network. Switch to GenLayer Bradbury Testnet.");
   }
+  onProgress?.({ stage: "awaiting_wallet", method: functionName });
   const client = createClient({ chain: GENLAYER_CHAIN as any, endpoint: GENLAYER_RPC_ENDPOINT, account: activeWallet.account, provider }) as unknown as AnyClient;
   const result = await client.writeContract({ address: requireContractAddress(), functionName, args, value });
-  const hash = String(result);
+  const hashValue = typeof result === "string" ? result : result && typeof result === "object" ? (result as { hash?: unknown; txHash?: unknown; transactionHash?: unknown }).hash ?? (result as { txHash?: unknown }).txHash ?? (result as { transactionHash?: unknown }).transactionHash : undefined;
+  const hash = String(hashValue ?? result);
+  onProgress?.({ stage: "submitted", method: functionName, hash });
+  onProgress?.({ stage: "processing", method: functionName, hash });
   const receipt = await Promise.race([
     client.waitForTransactionReceipt({ hash, status: TransactionStatus.ACCEPTED, interval: 2_000, retries: 60 }),
     new Promise<null>((resolve) => setTimeout(() => resolve(null), 150_000)),
@@ -41,7 +59,12 @@ export async function writeContract(functionName: string, args: unknown[] = [], 
   if (receipt === null) throw new Error(`Transaction ${hash} is still processing. Refresh shortly.`);
   if (receipt?.txExecutionResultName === ExecutionResult.FINISHED_WITH_ERROR) throw new Error("This action could not be completed.");
   if (receipt?.txExecutionResultName !== ExecutionResult.FINISHED_WITH_RETURN) throw new Error("Transaction is still processing. Refresh shortly.");
+  onProgress?.({ stage: "accepted", method: functionName, hash });
   return { hash, receipt };
+  } catch (error) {
+    onProgress?.({ stage: "failed", method: functionName, error: error instanceof Error ? error.message : String(error) });
+    throw error;
+  }
 }
 
 export function transactionExplorer(hash: string) { return `${CONTRACT_EXPLORER}/tx/${hash}`; }

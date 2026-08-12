@@ -2,7 +2,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Github, ShieldCheck } from "lucide-react";
 import { Section, SectionHeading } from "@/components/commoda/Section";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { poolQuery, marketsQuery, configQuery } from "@/lib/commoda/queries";
 import { gen } from "@/lib/commoda/format";
@@ -35,7 +34,7 @@ function TransparencyPage() {
   const stats = pool
     ? [
         { label: "Pool balance", value: gen(pool.poolBalance) },
-        { label: "Reserved liability", value: gen(pool.reservedLiability) },
+        { label: "Reserved for payouts", value: gen(pool.reservedLiability) },
         { label: "Active protections", value: pool.activeProtections.toLocaleString() },
         { label: "Payouts paid", value: gen(pool.payoutsPaid) },
       ]
@@ -58,7 +57,7 @@ function TransparencyPage() {
       </Section>
 
       <Section>
-        <SectionHeading eyebrow="Pool state" title="Protocol reserves" />
+        <SectionHeading eyebrow="Pool" title="Protection pool" />
         <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
           {isPending || !pool
             ? [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-28 rounded-xl" />)
@@ -73,8 +72,7 @@ function TransparencyPage() {
         </div>
         {pool ? (
           <p className="mt-5 text-sm text-slate">
-            Pool utilisation: <span className="font-semibold text-ink">{pool.utilisationPct.toFixed(2)}%</span>{" "}
-            of reserves are committed against open protections.
+            <span className="font-semibold text-ink">{pool.utilisationPct.toFixed(2)}%</span> of the pool is currently reserved for active protections.
           </p>
         ) : null}
       </Section>
@@ -87,11 +85,11 @@ function TransparencyPage() {
               {[
                 {
                   t: "Protection registry",
-                  d: "Stores each protection: market, drop level, duration, locked reference price, derived trigger, premium, payout and state.",
+                  d: "Records each protection's market, drop level, coverage, starting price, protected price, premium, payout and status.",
                 },
                 {
                   t: "Settlement engine",
-                  d: "Processes one covered day at a time, fetching daily closes from both sources and writing an immutable day result.",
+                  d: "Checks one completed day at a time using daily closing prices from Binance and Gate.",
                 },
                 {
                   t: "Pool & liability accounting",
@@ -141,14 +139,9 @@ function TransparencyPage() {
             </div>
 
             <div className="mt-8 rounded-xl border border-navy/15 bg-navy/5 p-6">
-              <h3 className="text-sm font-semibold text-navy-deep">Settlement rule</h3>
+              <h3 className="text-sm font-semibold text-navy-deep">How a day is settled</h3>
               <p className="mt-2 text-sm leading-relaxed text-slate">
-                A covered day is <strong className="text-danger">BREACHED</strong> only when the
-                Binance daily close and the Gate daily close are both at or below the stored trigger
-                price. If both are above, the day is{" "}
-                <strong className="text-success">NOT_BREACHED</strong>. If the sources disagree or
-                one is unavailable, the day is{" "}
-                <strong className="text-warning">INCONCLUSIVE</strong> and retried.
+                A covered day is marked <strong className="text-danger">Protected price reached</strong> only when both daily closing prices are at or below your protected price. If both are above it, the day is marked <strong className="text-success">No protected drop</strong>. If the sources disagree or one is unavailable, the day stays open and is checked again.
               </p>
             </div>
           </div>
@@ -159,16 +152,16 @@ function TransparencyPage() {
         <div className="grid gap-12 lg:grid-cols-[1fr_1fr]">
           <SectionHeading
             tone="light"
-            eyebrow="Validators"
-            title="What validators verify"
-            lead="GenLayer validators independently fetch the external market evidence for each settlement. They are not merely checking that a payload is well-formed JSON."
+            eyebrow="Verification"
+            title="How settlement is verified"
+            lead="GenLayer validators independently check the market prices used to settle each protection."
           />
           <ul className="space-y-4">
             {[
-              "Each validator independently requests the historical daily close from Binance and Gate for the covered date.",
-              "Validators compare the retrieved closes against the trigger price stored on the protection at purchase.",
-              "A day result is only written when validators reach agreement on the same outcome from their own retrieved evidence.",
-              "Disagreement between sources or between validators produces an inconclusive day rather than a resolved one.",
+              "They check both market sources — Validators independently fetch the daily closing prices from Binance and Gate.",
+              "They compare prices with your protected price — The prices are checked against the protection level recorded when you purchased.",
+              "Settlement only completes after agreement — A result is accepted only when validators agree on the outcome.",
+              "Disagreement means the day is checked again — If the data does not agree, Commoda does not guess. That settlement day remains unresolved and can be retried.",
             ].map((t) => (
               <li
                 key={t}

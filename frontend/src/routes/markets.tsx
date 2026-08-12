@@ -5,7 +5,7 @@ import { Section, SectionHeading } from "@/components/commoda/Section";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { marketsQuery, marketTermsQuery } from "@/lib/commoda/queries";
-import { priceDigits } from "@/lib/commoda/markets";
+import { marketToSlug, priceDigits } from "@/lib/commoda/markets";
 import { DROPS, DURATIONS } from "@/lib/commoda/terms";
 import { gen } from "@/lib/commoda/format";
 import { LivePrice } from "@/components/commoda/LivePrice";
@@ -73,9 +73,11 @@ function MarketsPage() {
                       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
                         <div className="min-w-0">
                           <p className="eyebrow text-slate">{m.id}</p>
-                          <h2 className="mt-2 text-2xl font-semibold text-navy-deep sm:text-3xl">
-                            {m.name}
-                          </h2>
+                          <Link to="/markets/$market" params={{ market: marketToSlug(m.id) }} className="group inline-block">
+                            <h2 className="mt-2 text-2xl font-semibold text-navy-deep group-hover:text-navy sm:text-3xl">
+                              {m.name}
+                            </h2>
+                          </Link>
                         </div>
                         <span className="shrink-0 rounded-full border border-success/30 bg-success/10 px-3 py-1 text-xs font-semibold text-success">
                           Available

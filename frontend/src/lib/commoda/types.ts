@@ -33,6 +33,7 @@ export interface SettlementDay {
   result: DayResult;
   binanceClose: number | null;
   gateClose: number | null;
+  evidenceVersion?: number;
   note?: string;
 }
 
@@ -48,6 +49,7 @@ export interface Protection {
   startDate: string;
   endDate: string;
   state: ProtectionState;
+  settledDays: number;
   days: SettlementDay[];
   nextDate?: string;
   breachDate?: string;

@@ -1,4 +1,6 @@
 import { Loader2 } from "lucide-react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Sheet,
   SheetContent,
@@ -11,6 +13,7 @@ import { ResultBadge, StateBadge } from "@/components/commoda/StateBadge";
 import { MARKETS, priceDigits } from "@/lib/commoda/markets";
 import { dateLabel, gen, shortDate, usd } from "@/lib/commoda/format";
 import { canClaimProtection, getDayResultLabel, getSettlementAction } from "@/lib/commoda/service";
+import { settlementEvidenceQuery } from "@/lib/commoda/queries";
 import type { Protection } from "@/lib/commoda/types";
 
 interface Props {
@@ -33,7 +36,7 @@ export function ProtectionDrawer({
   if (!protection) return null;
   const market = MARKETS[protection.market];
   const digits = priceDigits(protection.market);
-  const settledDays = protection.days.filter((d) => d.result !== "UNPROCESSED").length;
+  const settledDays = protection.settledDays;
   const settlementAction = getSettlementAction(protection);
   const canClaim = canClaimProtection(protection);
   const busy = pendingAction?.id === protection.id;
@@ -43,7 +46,7 @@ export function ProtectionDrawer({
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
         <SheetHeader className="border-b border-border pb-5">
           <div className="flex items-center gap-3">
-            <SheetTitle className="text-navy-deep">{protection.id}</SheetTitle>
+            <SheetTitle className="text-navy-deep">{market.name}</SheetTitle>
             <StateBadge state={protection.state} />
           </div>
           <SheetDescription>
@@ -78,7 +81,7 @@ export function ProtectionDrawer({
           <div>
             <h3 className="text-sm font-semibold text-navy-deep">Daily settlement timeline</h3>
             <p className="mt-1 text-xs text-slate">
-              {settledDays} of {protection.duration} covered days settled.
+              {settledDays} of {protection.duration} days checked.
             </p>
             <ol className="mt-4 space-y-2">
               {protection.days.map((d) => (
@@ -91,9 +94,10 @@ export function ProtectionDrawer({
                       Day {d.day} · {shortDate(d.date)}
                     </p>
                     <p className="mt-0.5 truncate text-xs text-slate">
-                      {getDayResultLabel(d.result)}
+                    {getDayResultLabel(d.result)}
                     </p>
                     {d.note ? <p className="mt-1 text-xs text-warning">{d.note}</p> : null}
+                    {d.result !== "UNPROCESSED" && d.evidenceVersion ? <EvidenceDetails market={protection.market} day={d} digits={digits} /> : null}
                   </div>
                   <ResultBadge result={d.result} />
                 </li>
@@ -101,24 +105,26 @@ export function ProtectionDrawer({
             </ol>
           </div>
 
-          <details className="border border-border bg-card p-4">
-            <summary className="cursor-pointer text-sm font-semibold text-navy-deep">Verification details</summary>
-            <p className="mt-3 text-xs leading-relaxed text-slate">
-              Each completed day is checked against your protected price using verified market prices.
-            </p>
-            {protection.days.filter((d) => d.binanceClose !== null || d.gateClose !== null).map((d) => (
-              <dl key={d.day} className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-3 text-xs">
-                <Item label="Settlement date" value={shortDate(d.date)} />
-                <Item label="Verification result" value={getDayResultLabel(d.result)} />
-                <Item label="Price check 1" value={d.binanceClose === null ? "—" : usd(d.binanceClose, digits)} />
-                <Item label="Price check 2" value={d.gateClose === null ? "—" : usd(d.gateClose, digits)} />
-              </dl>
-            ))}
-          </details>
+          <p className="text-xs leading-relaxed text-slate">Verification details are available on completed daily checks.</p>
         </div>
       </SheetContent>
     </Sheet>
   );
+}
+
+function EvidenceDetails({ market, day, digits }: { market: Protection["market"]; day: Protection["days"][number]; digits: number }) {
+  const [open, setOpen] = useState(false);
+  const query = useQuery(settlementEvidenceQuery(market, day.date, day.evidenceVersion ?? 0));
+  const evidence = query.data;
+  return <details className="mt-2 text-xs" onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary className="cursor-pointer text-slate">Verification details</summary>
+    {open ? <dl className="mt-2 grid grid-cols-2 gap-2 border-t border-border pt-2 text-xs">
+      <Item label="Settlement date" value={shortDate(day.date)} />
+      <Item label="Result" value={getDayResultLabel(day.result)} />
+      <Item label="Source 1 price" value={query.isPending ? "Loading…" : evidence?.binanceClose == null ? "—" : usd(evidence.binanceClose, digits)} />
+      <Item label="Source 2 price" value={query.isPending ? "Loading…" : evidence?.gateClose == null ? "—" : usd(evidence.gateClose, digits)} />
+    </dl> : null}
+  </details>;
 }
 
 function Item({ label, value }: { label: string; value: string }) {

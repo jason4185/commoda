@@ -259,6 +259,61 @@ def test_too_early_sequential_and_authorized_settlement(direct_vm, direct_deploy
     assert contract.settlement_readiness(0, "2026-08-04")["status"] == "SETTLEMENT_ORDER"
 
 
+def test_same_day_settlement_is_blocked_at_each_utc_boundary(direct_vm, direct_deploy, direct_owner, direct_alice):
+    direct_vm.warp("2026-08-12T12:00:00Z")
+    contract = _deploy_funded(direct_vm, direct_deploy, direct_owner)
+    _purchase(direct_vm, contract, direct_alice)
+    direct_vm.sender = direct_owner
+
+    before = contract.get_protection(0)
+    pool_before = contract.get_pool_state()
+    for timestamp in ("2026-08-13T00:00:00Z", "2026-08-13T12:00:00Z", "2026-08-13T23:59:59Z"):
+        _warp(direct_vm, timestamp)
+        with direct_vm.expect_revert("settlement day incomplete"):
+            contract.settle_protection(0)
+        current = contract.get_protection(0)
+        assert current["next_date"] == before["next_date"] == "2026-08-13"
+        assert current["settled_days"] == before["settled_days"] == 0
+        assert current["state"] == before["state"] == "ACTIVE"
+        assert contract.get_pool_state() == pool_before
+        assert contract.get_current_market_settlement_version("WTI", "2026-08-13")["version"] == 0
+
+    _warp(direct_vm, "2026-08-14T00:00:00Z")
+    _mock_settlement(direct_vm, "2026-08-13", "100", "100")
+    assert contract.settle_protection(0) == "ACTIVE"
+    assert contract.get_protection(0)["next_date"] == "2026-08-14"
+
+
+def test_sender_sensitive_readiness_views_match_authorization(direct_vm, direct_deploy, direct_owner, direct_alice, direct_bob, direct_charlie):
+    direct_vm.warp("2026-08-01T12:00:00Z")
+    contract = _deploy_funded(direct_vm, direct_deploy, direct_owner)
+    _purchase(direct_vm, contract, direct_alice)
+    direct_vm.sender = direct_owner
+    _add_operator(contract, direct_bob)
+    _warp(direct_vm, "2026-08-03T00:00:01Z")
+
+    for sender, expected in (
+        (direct_alice, True),
+        (direct_owner, True),
+        (direct_bob, True),
+        (direct_charlie, False),
+        (bytes(20), False),
+    ):
+        direct_vm.sender = sender
+        readiness = contract.settlement_readiness(0)
+        assert readiness["can_settle"] is expected
+        if not expected:
+            assert readiness["status"] == "UNAUTHORIZED"
+
+    _mock_settlement(direct_vm, "2026-08-02", "98", "98")
+    direct_vm.sender = direct_owner
+    assert contract.settle_protection(0) == "CLAIMABLE"
+    for sender, expected in ((direct_alice, True), (direct_owner, False), (direct_charlie, False), (bytes(20), False)):
+        direct_vm.sender = sender
+        readiness = contract.claim_readiness(0)
+        assert readiness["can_claim"] is expected
+
+
 def test_operator_settlement_breached_claim_permissions_and_accounting(direct_vm, direct_deploy, direct_owner, direct_alice, direct_bob):
     direct_vm.warp("2026-08-01T12:00:00Z")
     contract = _deploy_funded(direct_vm, direct_deploy, direct_owner, 5 * GEN)

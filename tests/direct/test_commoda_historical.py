@@ -37,6 +37,14 @@ def _mock_day(vm, date, binance="100", gate="100"):
     )
 
 
+def _mock_reference(vm, market="WTI", price="100"):
+    contract = SYMBOLS[market][1]
+    vm.mock_web(
+        rf"gateio\.ws/api/v4/futures/usdt/tickers.*contract={contract}.*",
+        {"status": 200, "body": json.dumps([{"contract": contract, "last": price}])},
+    )
+
+
 def _fund(vm, contract, owner, amount=30 * GEN):
     vm.sender = owner
     vm.value = amount
@@ -46,6 +54,7 @@ def _fund(vm, contract, owner, amount=30 * GEN):
 
 def _historical_purchase(vm, contract, buyer, date="2026-07-20", duration=7, event=1):
     vm.clear_mocks()
+    _mock_reference(vm)
     _mock_day(vm, date)
     vm.sender = buyer
     vm.value = GEN

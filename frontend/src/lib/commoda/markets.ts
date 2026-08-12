@@ -1,5 +1,13 @@
 import type { Market, MarketId } from "./types";
 
+export type MarketSlug = "wti" | "brent" | "natgas";
+
+const MARKET_SLUGS: Record<MarketId, MarketSlug> = {
+  WTI: "wti",
+  BRENT: "brent",
+  NATGAS: "natgas",
+};
+
 export const MARKETS: Record<MarketId, Market> = {
   WTI: {
     id: "WTI",
@@ -45,3 +53,13 @@ export const MARKETS: Record<MarketId, Market> = {
 export const MARKET_LIST: Market[] = [MARKETS.WTI, MARKETS.BRENT, MARKETS.NATGAS];
 
 export const priceDigits = (id: MarketId) => (id === "NATGAS" ? 3 : 2);
+
+export function marketFromSlug(value: string | undefined): MarketId | null {
+  if (!value) return null;
+  const entry = (Object.entries(MARKET_SLUGS) as [MarketId, MarketSlug][]).find(([, slug]) => slug === value.toLowerCase());
+  return entry?.[0] ?? null;
+}
+
+export function marketToSlug(id: MarketId): MarketSlug {
+  return MARKET_SLUGS[id];
+}

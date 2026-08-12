@@ -17,6 +17,7 @@ import { MARKETS, priceDigits } from "@/lib/commoda/markets";
 import { dateLabel, gen, usd } from "@/lib/commoda/format";
 import type { Protection } from "@/lib/commoda/types";
 import { useWallet } from "@/lib/commoda/wallet";
+import { useTransactionManager } from "@/lib/commoda/transaction-context";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -40,6 +41,7 @@ export const Route = createFileRoute("/dashboard")({
 function DashboardPage() {
   const queryClient = useQueryClient();
   const wallet = useWallet();
+  const transaction = useTransactionManager();
   const owner = wallet.address ?? "";
   const { data, isPending, isError, refetch } = useQuery(protectionsQuery(owner));
   const { data: userSummary } = useQuery(summaryQuery(owner));
@@ -59,27 +61,25 @@ function DashboardPage() {
   };
 
   const settle = useMutation({
-    mutationFn: (id: string) => commodaService.settleNextDay(id),
-    onMutate: (id) => setPendingAction({ id, kind: "settle" }),
+    mutationFn: (id: string) => commodaService.settleNextDay(id, transaction.update),
+    onMutate: (id) => { setPendingAction({ id, kind: "settle" }); const target = allProtections.find((item) => item.id === id); transaction.begin(target && getSettlementAction(target) === "RETRY" ? "Retrying settlement" : "Settling protection", "settle_protection"); },
     onSuccess: (p) => {
       invalidate();
       const last = [...p.days].reverse().find((d) => d.result !== "UNPROCESSED");
-      toast.success(`Day settled for ${p.id}`, {
-        description: last ? `Result: ${last.result.replace("_", " ").toLowerCase()}` : undefined,
-      });
+      transaction.setOutcome(last ? ({ NOT_BREACHED: "No protected drop", BREACHED: "Protected price reached", INCONCLUSIVE: "Checking again required", UNPROCESSED: "Waiting" }[last.result]) : "Settlement accepted.");
     },
-    onError: (e: Error) => toast.error("Settlement failed", { description: e.message }),
+    onError: (e: Error) => { if (transaction.progress.stage !== "accepted") transaction.fail(e); toast.error("Settlement failed", { description: e.message }); },
     onSettled: () => setPendingAction(null),
   });
 
   const claim = useMutation({
-    mutationFn: (id: string) => commodaService.claim(id),
-    onMutate: (id) => setPendingAction({ id, kind: "claim" }),
+    mutationFn: (id: string) => commodaService.claim(id, transaction.update),
+    onMutate: (id) => { setPendingAction({ id, kind: "claim" }); transaction.begin("Claiming payout", "claim_payout"); },
     onSuccess: (p) => {
       invalidate();
-      toast.success(`Payout of ${gen(p.payout)} sent`, { description: `${p.id} is now claimed.` });
+      transaction.setOutcome(`Payout of ${gen(p.payout)} was accepted.`);
     },
-    onError: (e: Error) => toast.error("Claim failed", { description: e.message }),
+    onError: (e: Error) => { if (transaction.progress.stage !== "accepted") transaction.fail(e); toast.error("Claim failed", { description: e.message }); },
     onSettled: () => setPendingAction(null),
   });
 
@@ -88,7 +88,7 @@ function DashboardPage() {
     (p) => filter === "ALL" || (filter === "READY_TO_SETTLE" ? getSettlementAction(p) !== "NONE" : p.state === filter),
   );
   const selected = allProtections.find((p) => p.id === selectedId) ?? null;
-  const { data: selectedDetail } = useQuery(protectionQuery(selectedId ?? ""));
+  const { data: selectedDetail } = useQuery(protectionQuery(selectedId ?? "", owner));
 
   const summary = [
     { label: "Total", value: String(userSummary?.total ?? allProtections.length) },
@@ -177,7 +177,7 @@ function DashboardPage() {
                       return (
                         <button key={p.id} onClick={() => setSelectedId(p.id)} className="border border-border p-4 text-left hover:border-navy/35">
                           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate">{label}</p>
-                          <p className="mt-2 font-semibold text-navy-deep">{p.id} · {MARKETS[p.market].shortName}</p>
+                        <p className="mt-2 font-semibold text-navy-deep">{MARKETS[p.market].name}</p>
                           <p className="mt-3 text-sm text-amber">{canClaimProtection(p) ? "Claim Payout" : action === "RETRY" ? "Retry Settlement" : "Settle Now"}</p>
                         </button>
                       );
@@ -213,7 +213,7 @@ function DashboardPage() {
       </div>
 
       <ProtectionDrawer
-        protection={selectedDetail ?? selected}
+        protection={selected ? { ...selected, ...(selectedDetail ?? {}) } : null}
         open={Boolean(selected)}
         onOpenChange={(v) => !v && setSelectedId(null)}
         onSettle={(id) => settle.mutate(id)}
@@ -239,7 +239,7 @@ function ProtectionRow({
 }) {
   const market = MARKETS[p.market];
   const digits = priceDigits(p.market);
-  const settled = p.days.filter((d) => d.result !== "UNPROCESSED").length;
+  const settled = p.settledDays;
   const nextDay = p.days.find((d) => d.result === "INCONCLUSIVE") ?? p.days.find((d) => d.result === "UNPROCESSED");
   const action = getSettlementAction(p);
   const lastResult = [...p.days].reverse().find((d) => d.result !== "UNPROCESSED");
@@ -254,7 +254,7 @@ function ProtectionRow({
               onClick={onOpen}
               className="rounded text-base font-semibold text-navy-deep underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
-              {p.id}
+              {market.name}
             </button>
             <StateBadge state={p.state} />
             {lastResult ? <ResultBadge result={lastResult.result} /> : null}

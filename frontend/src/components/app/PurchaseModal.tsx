@@ -62,7 +62,6 @@ export function PurchaseModal({
               </DialogDescription>
             </DialogHeader>
             <dl className="mt-2 space-y-2.5 rounded-lg border border-border bg-sand/60 p-4 text-sm">
-              <Row label="Protection ID" value={result.id} />
               <Row label="Market" value={market.name} />
               <Row label="Premium" value={gen(result.premium)} />
               <Row label="Payout" value={gen(result.payout)} />

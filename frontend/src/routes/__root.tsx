@@ -15,6 +15,7 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { Toaster } from "@/components/ui/sonner";
 import { WalletProvider } from "@/lib/commoda/wallet";
+import { TransactionProvider } from "@/lib/commoda/transaction-context";
 
 function NotFoundComponent() {
   return (
@@ -136,6 +137,7 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <TransactionProvider>
       <WalletProvider>
         <div className="flex min-h-screen flex-col bg-porcelain">
           <Header />
@@ -146,6 +148,7 @@ function RootComponent() {
           <Footer />
         </div>
       </WalletProvider>
+      </TransactionProvider>
       <Toaster />
     </QueryClientProvider>
   );

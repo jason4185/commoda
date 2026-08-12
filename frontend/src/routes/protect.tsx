@@ -10,10 +10,11 @@ import { marketsQuery, qk, quoteQuery, marketTermsQuery } from "@/lib/commoda/qu
 import { commodaService } from "@/lib/commoda/service";
 import { priceDigits } from "@/lib/commoda/markets";
 import { DROPS, DURATIONS } from "@/lib/commoda/terms";
-import { addDays, dateLabel, gen, usd } from "@/lib/commoda/format";
+import { addDays, dateLabel, gen } from "@/lib/commoda/format";
 import type { DropPct, DurationDays, MarketId, Protection } from "@/lib/commoda/types";
 import { useWallet } from "@/lib/commoda/wallet";
 import { LivePrice } from "@/components/commoda/LivePrice";
+import { useTransactionManager } from "@/lib/commoda/transaction-context";
 
 const searchSchema = z.object({
   market: z.enum(["WTI", "BRENT", "NATGAS"]).optional(),
@@ -43,16 +44,17 @@ function ProtectPage() {
   const search = Route.useSearch();
   const queryClient = useQueryClient();
   const wallet = useWallet();
+  const transaction = useTransactionManager();
   const { data: markets, isPending, isError, refetch } = useQuery(marketsQuery);
 
   const [marketId, setMarketId] = useState<MarketId>(search.market ?? "WTI");
-  const [drop, setDrop] = useState<DropPct>(2);
-  const [duration, setDuration] = useState<DurationDays>(14);
+  const [drop, setDrop] = useState<DropPct>(1);
+  const [duration, setDuration] = useState<DurationDays>(7);
   const [modalOpen, setModalOpen] = useState(false);
   const [result, setResult] = useState<Protection | null>(null);
 
   const market = markets?.find((m) => m.id === marketId);
-  const { data: quote, isPending: quotePending, isError: quoteError } = useQuery(quoteQuery(marketId, duration, drop));
+  const { data: quote, isPending: quotePending, isError: quoteError, refetch: refetchQuote } = useQuery(quoteQuery(marketId, duration, drop));
   const { data: marketTerms } = useQuery(marketTermsQuery(marketId));
   const terms = quote ? { duration, drop, premium: quote.premium, payout: quote.payout } : null;
   const digits = priceDigits(marketId);
@@ -63,11 +65,14 @@ function ProtectPage() {
   }, [duration]);
 
   const purchase = useMutation({
-    mutationFn: () => commodaService.purchase({ market: marketId, drop, duration }),
+    mutationFn: () => commodaService.purchase({ market: marketId, drop, duration }, transaction.update),
+    onMutate: () => { setModalOpen(false); transaction.begin("Purchasing protection", "purchase_protection"); },
     onSuccess: (p) => {
       setResult(p);
       queryClient.invalidateQueries({ queryKey: qk.pool });
+      transaction.setOutcome("Your protection purchase was accepted.");
     },
+    onError: (error) => { if (transaction.progress.stage !== "accepted") transaction.fail(error); },
   });
 
   const preview = null;
@@ -222,7 +227,7 @@ function ProtectPage() {
                     variant="accent"
                     size="lg"
                     className="w-full"
-                    disabled={!market || quotePending || quoteError || !terms}
+                    disabled={!market || quoteError || (Boolean(wallet.address) && (quotePending || !terms))}
                     onClick={() => {
                       if (!wallet.address) { void wallet.connect(); return; }
                       if (wallet.wrongNetwork) { wallet.switchToBradbury(); return; }
@@ -231,8 +236,18 @@ function ProtectPage() {
                       setModalOpen(true);
                     }}
                   >
-                    {!wallet.address ? "Connect Wallet" : wallet.wrongNetwork ? "Switch to Bradbury" : "Review Protection"}
+                    {!wallet.address ? "Connect Wallet" : wallet.wrongNetwork ? "Switch to Bradbury" : quotePending ? "Loading terms…" : "Review Protection"}
                   </Button>
+                  {quoteError ? (
+                    <div className="mt-4 rounded-md border border-danger/25 bg-danger/5 px-3 py-3 text-sm text-danger">
+                      <p>Unable to load protection terms.</p>
+                      <Button variant="outline" size="sm" className="mt-3" onClick={() => void refetchQuote()}>
+                        Try again
+                      </Button>
+                    </div>
+                  ) : quotePending ? (
+                    <p className="mt-3 text-xs text-slate">Loading protection terms…</p>
+                  ) : null}
                   <p className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-slate">
                     <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
                     Payout is fixed and does not scale with the size of the drop.
@@ -244,7 +259,7 @@ function ProtectPage() {
         )}
       </div>
 
-      {market ? (
+      {market && terms ? (
         <PurchaseModal
           open={modalOpen}
           onOpenChange={(v) => {
