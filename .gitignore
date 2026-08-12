@@ -1,0 +1,14 @@
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.output/
+frontend/.vinxi/
+frontend/.tanstack/
+frontend/.nitro/
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+frontend/.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/

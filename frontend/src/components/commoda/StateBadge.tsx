@@ -1,0 +1,45 @@
+import type { DayResult, ProtectionState } from "@/lib/commoda/types";
+
+const base =
+  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold tracking-tight";
+
+const stateStyles: Record<ProtectionState, string> = {
+  ACTIVE: "border-navy/20 bg-navy/8 text-navy",
+  CLAIMABLE: "border-success/30 bg-success/10 text-success",
+  EXPIRED: "border-border bg-muted text-slate",
+  CLAIMED: "border-amber/40 bg-amber/15 text-[oklch(0.45_0.11_74)]",
+};
+
+const stateLabels: Record<ProtectionState, string> = {
+  ACTIVE: "Active",
+  CLAIMABLE: "Claimable",
+  EXPIRED: "Expired",
+  CLAIMED: "Claimed",
+};
+
+export function StateBadge({ state }: { state: ProtectionState }) {
+  return (
+    <span className={`${base} ${stateStyles[state]}`}>
+      <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
+      {stateLabels[state]}
+    </span>
+  );
+}
+
+const resultStyles: Record<DayResult, string> = {
+  UNPROCESSED: "border-border bg-muted text-slate",
+  BREACHED: "border-danger/30 bg-danger/10 text-danger",
+  NOT_BREACHED: "border-success/25 bg-success/10 text-success",
+  INCONCLUSIVE: "border-warning/35 bg-warning/12 text-warning",
+};
+
+const resultLabels: Record<DayResult, string> = {
+  UNPROCESSED: "Unprocessed",
+  BREACHED: "Breached",
+  NOT_BREACHED: "Not breached",
+  INCONCLUSIVE: "Inconclusive",
+};
+
+export function ResultBadge({ result }: { result: DayResult }) {
+  return <span className={`${base} ${resultStyles[result]}`}>{resultLabels[result]}</span>;
+}
