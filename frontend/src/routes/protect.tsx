@@ -6,12 +6,14 @@ import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PurchaseModal } from "@/components/app/PurchaseModal";
-import { marketsQuery, qk } from "@/lib/commoda/queries";
+import { marketsQuery, qk, quoteQuery, marketTermsQuery } from "@/lib/commoda/queries";
 import { commodaService } from "@/lib/commoda/service";
 import { priceDigits } from "@/lib/commoda/markets";
-import { DROPS, DURATIONS, getTerms, triggerPrice } from "@/lib/commoda/terms";
+import { DROPS, DURATIONS } from "@/lib/commoda/terms";
 import { addDays, dateLabel, gen, usd } from "@/lib/commoda/format";
 import type { DropPct, DurationDays, MarketId, Protection } from "@/lib/commoda/types";
+import { useWallet } from "@/lib/commoda/wallet";
+import { LivePrice } from "@/components/commoda/LivePrice";
 
 const searchSchema = z.object({
   market: z.enum(["WTI", "BRENT", "NATGAS"]).optional(),
@@ -25,12 +27,12 @@ export const Route = createFileRoute("/protect")({
       {
         name: "description",
         content:
-          "Choose a commodity, drop threshold and duration, review the fixed premium and payout, and lock your protection reference price.",
+          "Choose a commodity, drop level and coverage period, then review your fixed premium and payout.",
       },
       { property: "og:title", content: "Get Drop Protection | Commoda" },
       {
         property: "og:description",
-        content: "Select market, drop threshold and duration for fixed-payout commodity drop protection.",
+        content: "Choose a market, drop level and coverage period for fixed-payout commodity protection.",
       },
     ],
   }),
@@ -40,6 +42,7 @@ export const Route = createFileRoute("/protect")({
 function ProtectPage() {
   const search = Route.useSearch();
   const queryClient = useQueryClient();
+  const wallet = useWallet();
   const { data: markets, isPending, isError, refetch } = useQuery(marketsQuery);
 
   const [marketId, setMarketId] = useState<MarketId>(search.market ?? "WTI");
@@ -49,7 +52,9 @@ function ProtectPage() {
   const [result, setResult] = useState<Protection | null>(null);
 
   const market = markets?.find((m) => m.id === marketId);
-  const terms = getTerms(duration, drop);
+  const { data: quote, isPending: quotePending, isError: quoteError } = useQuery(quoteQuery(marketId, duration, drop));
+  const { data: marketTerms } = useQuery(marketTermsQuery(marketId));
+  const terms = quote ? { duration, drop, premium: quote.premium, payout: quote.payout } : null;
   const digits = priceDigits(marketId);
 
   const { start, end } = useMemo(() => {
@@ -61,13 +66,11 @@ function ProtectPage() {
     mutationFn: () => commodaService.purchase({ market: marketId, drop, duration }),
     onSuccess: (p) => {
       setResult(p);
-      queryClient.invalidateQueries({ queryKey: qk.protections });
-      queryClient.invalidateQueries({ queryKey: qk.wallet });
       queryClient.invalidateQueries({ queryKey: qk.pool });
     },
   });
 
-  const preview = market ? triggerPrice(market.referencePrice, drop) : 0;
+  const preview = null;
 
   return (
     <div className="bg-porcelain">
@@ -78,8 +81,8 @@ function ProtectPage() {
             Build your drop protection
           </h1>
           <p className="mt-4 leading-relaxed text-slate">
-            Choose a market, a drop threshold and a coverage period. Premium and payout are fixed
-            before you commit.
+            Choose a market, a drop level and a coverage period. Your premium and payout are fixed
+            before you buy.
           </p>
         </header>
 
@@ -120,7 +123,7 @@ function ProtectPage() {
                             <p
                               className={`mt-1 text-sm tabular-nums ${active ? "text-porcelain/70" : "text-slate"}`}
                             >
-                              {usd(m.referencePrice, priceDigits(m.id))}
+                              <LivePrice market={m.id} />
                             </p>
                           </button>
                         );
@@ -128,7 +131,7 @@ function ProtectPage() {
                 </div>
               </StepBlock>
 
-              <StepBlock index={2} title="Choose drop threshold">
+              <StepBlock index={2} title="Choose drop protection">
                 <div className="grid gap-3 sm:grid-cols-3">
                   {DROPS.map((d) => {
                     const active = d === drop;
@@ -145,7 +148,7 @@ function ProtectPage() {
                       >
                         <p className="text-2xl font-semibold text-navy-deep">{d}%</p>
                         <p className="mt-1 text-sm text-slate">
-                          Pays {gen(getTerms(duration, d).payout)}
+                          Pays {gen((marketTerms as any[] | undefined)?.find((t) => t.duration === duration && t.event_percent === d)?.payout)}
                         </p>
                       </button>
                     );
@@ -170,7 +173,7 @@ function ProtectPage() {
                       >
                         <p className="text-2xl font-semibold text-navy-deep">{d} days</p>
                         <p className="mt-1 text-sm text-slate">
-                          Premium {gen(getTerms(d, drop).premium)}
+                          Premium {gen((marketTerms as any[] | undefined)?.find((t) => t.duration === d && t.event_percent === drop)?.premium)}
                         </p>
                       </button>
                     );
@@ -181,11 +184,10 @@ function ProtectPage() {
               <div className="flex gap-3 rounded-xl border border-navy/15 bg-navy/5 p-5">
                 <Lock className="mt-0.5 h-5 w-5 shrink-0 text-navy" aria-hidden />
                 <div>
-                  <p className="text-sm font-semibold text-navy-deep">Locked reference price</p>
+                  <p className="text-sm font-semibold text-navy-deep">Your starting price</p>
                   <p className="mt-1.5 text-sm leading-relaxed text-slate">
-                    Your reference price is determined during purchase from Gate and stored with the
-                    protection. Prices shown before purchase are indicative previews only — the
-                    trigger is fixed from the reference captured at confirmation.
+                    Your starting price is recorded when the purchase completes. Your protected price
+                    is calculated from the drop level you select.
                   </p>
                 </div>
               </div>
@@ -203,24 +205,16 @@ function ProtectPage() {
 
                 <dl className="divide-y divide-border px-6 text-sm">
                   <Line label="Protected drop" value={`${drop}%`} />
-                  <Line
-                    label="Trigger rule"
-                    value={`Daily close ≤ reference × ${(1 - drop / 100).toFixed(2)}`}
-                  />
-                  <Line
-                    label="Trigger price"
-                    value={market ? usd(preview, digits) : "—"}
-                    hint="Calculated at purchase"
-                  />
+                  <Line label="Protected price" value="Calculated at purchase" hint="Based on the starting price" />
                   <Line label="Duration" value={`${duration} days`} />
                   <Line
-                    label="Expected coverage"
+                    label="Coverage"
                     value={`${dateLabel(start)} → ${dateLabel(end)}`}
                   />
-                  <Line label="Reference price" value="Determined at purchase" />
-                  <Line label="Settlement" value="Daily after completed UTC day" />
-                  <Line label="Premium" value={gen(terms.premium)} strong />
-                  <Line label="Fixed payout" value={gen(terms.payout)} strong />
+                  <Line label="Starting price" value="Recorded at purchase" />
+                  <Line label="Daily checks" value="After each completed day" />
+                  <Line label="Premium" value={gen(terms?.premium)} strong />
+                  <Line label="Payout" value={gen(terms?.payout)} strong />
                 </dl>
 
                 <div className="px-6 pt-5 pb-6">
@@ -228,14 +222,16 @@ function ProtectPage() {
                     variant="accent"
                     size="lg"
                     className="w-full"
-                    disabled={!market}
+                    disabled={!market || quotePending || quoteError || !terms}
                     onClick={() => {
+                      if (!wallet.address) { void wallet.connect(); return; }
+                      if (wallet.wrongNetwork) { wallet.switchToBradbury(); return; }
                       setResult(null);
                       purchase.reset();
                       setModalOpen(true);
                     }}
                   >
-                    Review & Protect
+                    {!wallet.address ? "Connect Wallet" : wallet.wrongNetwork ? "Switch to Bradbury" : "Review Protection"}
                   </Button>
                   <p className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-slate">
                     <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -256,7 +252,7 @@ function ProtectPage() {
             if (!v) setResult(null);
           }}
           market={market}
-          terms={terms}
+          terms={terms!}
           previewTrigger={preview}
           startDate={start}
           endDate={end}

@@ -1,6 +1,7 @@
 @import "tailwindcss" source(none);
 @source "../src";
 @import "tw-animate-css";
+@import "@rainbow-me/rainbowkit/styles.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -195,13 +196,6 @@
 @utility surface-dark {
   background-color: var(--navy-deep);
   color: var(--porcelain);
-}
-
-@utility grid-motif {
-  background-image:
-    linear-gradient(to right, oklch(0.985 0.004 91.4 / 6%) 1px, transparent 1px),
-    linear-gradient(to bottom, oklch(0.985 0.004 91.4 / 6%) 1px, transparent 1px);
-  background-size: 64px 64px;
 }
 
 @utility contour-motif {

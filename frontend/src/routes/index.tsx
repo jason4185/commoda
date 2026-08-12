@@ -11,10 +11,9 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { marketsQuery, poolQuery } from "@/lib/commoda/queries";
-import { priceDigits } from "@/lib/commoda/markets";
-import { DROPS, DURATIONS, getTerms } from "@/lib/commoda/terms";
-import { gen, pct, usd } from "@/lib/commoda/format";
+import { marketsQuery } from "@/lib/commoda/queries";
+import { DROPS, DURATIONS } from "@/lib/commoda/terms";
+import { LivePrice } from "@/components/commoda/LivePrice";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -23,13 +22,13 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Fixed-payout drop protection for WTI, Brent and Natural Gas. Predefined triggers, locked reference prices and dual-source settlement on GenLayer.",
+          "Fixed-payout price protection for WTI, Brent and Natural Gas with simple terms and verified daily checks.",
       },
       { property: "og:title", content: "Commoda — Protection Built for Commodity Price Drops" },
       {
         property: "og:description",
         content:
-          "Predefined triggers. Fixed payouts. Independently verified market data.",
+          "Predefined price drops. Fixed payouts. Verified daily checks.",
       },
     ],
   }),
@@ -38,14 +37,12 @@ export const Route = createFileRoute("/")({
 
 function Index() {
   const { data: markets, isPending } = useQuery(marketsQuery);
-  const { data: pool } = useQuery(poolQuery);
 
   return (
     <>
       {/* Hero */}
       <section className="relative overflow-hidden bg-navy-deep">
         <div className="contour-motif absolute inset-0" aria-hidden />
-        <div className="grid-motif absolute inset-0 opacity-60" aria-hidden />
         <div className="relative mx-auto w-full max-w-[1320px] px-5 py-24 sm:px-8 md:py-36">
           <p className="eyebrow text-amber">Commodity drop protection</p>
           <h1 className="mt-6 max-w-4xl text-4xl leading-[1.05] font-semibold text-porcelain sm:text-6xl md:text-[4.4rem]">
@@ -53,9 +50,9 @@ function Index() {
             <span className="font-display text-amber italic">commodity price drops.</span>
           </h1>
           <p className="mt-7 max-w-2xl text-lg leading-relaxed text-porcelain/70 sm:text-xl">
-            Predefined triggers. Fixed payouts. Independently verified market data. Protect against
-            downside moves in WTI, Brent and Natural Gas with terms locked before purchase and
-            settlement determined from market evidence.
+            Protect WTI, Brent and Natural Gas against predefined price drops. Choose your drop level
+            and coverage period, pay a fixed premium, and receive a fixed payout if the protected
+            price is reached.
           </p>
           <div className="mt-10 flex flex-wrap gap-3">
             <Button asChild variant="accent" size="xl">
@@ -64,7 +61,7 @@ function Index() {
               </Link>
             </Button>
             <Button asChild variant="onDark" size="xl">
-              <Link to="/how-it-works">How Settlement Works</Link>
+              <Link to="/how-it-works">How It Works</Link>
             </Button>
           </div>
 
@@ -92,17 +89,9 @@ function Index() {
                     <div className="mt-5 flex items-end justify-between gap-3">
                       <div>
                         <p className="text-2xl font-semibold tabular-nums text-porcelain">
-                          {usd(m.referencePrice, priceDigits(m.id))}
+                          <LivePrice market={m.id} dark />
                         </p>
-                        <p
-                          className={`mt-0.5 text-xs tabular-nums ${
-                            m.change24hPct < 0
-                              ? "text-[oklch(0.7_0.15_29)]"
-                              : "text-[oklch(0.78_0.11_164)]"
-                          }`}
-                        >
-                          {pct(m.change24hPct)} 24h
-                        </p>
+                        <p className="mt-0.5 text-xs text-porcelain/55">Live price</p>
                       </div>
                       <p className="text-xs text-porcelain/55">Drops 1% · 2% · 3%</p>
                     </div>
@@ -128,7 +117,7 @@ function Index() {
             {[
               { t: "Choose your commodity", d: "WTI, Brent or Natural Gas." },
               { t: "Set your protection", d: "Choose a 1%, 2% or 3% drop and a 7, 14 or 30 day period." },
-              { t: "Settlement is verified", d: "Market evidence determines whether your predefined condition was met." },
+              { t: "Daily checks", d: "Verified market prices show whether your protected price was reached." },
             ].map((i, n) => (
               <li key={i.t} className="editorial-rule pt-4">
                 <span className="font-display text-4xl text-amber">0{n + 1}</span>
@@ -145,7 +134,7 @@ function Index() {
           <SectionHeading
             eyebrow="A protection, at a glance"
             title={<>Every covered day leaves an <span className="font-display italic">auditable trail.</span></>}
-            lead="Example values below are illustrative. The reference, trigger and daily evidence are stored with the protection as the lifecycle progresses."
+            lead="Example values below are illustrative. Your starting price, protected price and daily checks are recorded as the protection progresses."
           />
           <div className="border border-border bg-card p-6 sm:p-8">
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-6">
@@ -153,7 +142,7 @@ function Index() {
               <span className="border border-success/25 bg-success/10 px-3 py-1 text-xs font-semibold text-success">Example</span>
             </div>
             <dl className="grid grid-cols-2 gap-6 py-7 sm:grid-cols-4">
-              {[['Reference price', '$82.39'], ['Trigger', '$81.57'], ['Coverage', '7 days'], ['Payout', '2 GEN']].map(([label, value]) => <div key={label}><dt className="text-xs text-slate">{label}</dt><dd className="mt-2 font-semibold tabular-nums text-navy-deep">{value}</dd></div>)}
+                  {[['Starting price', '$82.39'], ['Protected price', '$81.57'], ['Coverage', '7 days'], ['Payout', '2 GEN']].map(([label, value]) => <div key={label}><dt className="text-xs text-slate">{label}</dt><dd className="mt-2 font-semibold tabular-nums text-navy-deep">{value}</dd></div>)}
             </dl>
             <div className="flex items-center gap-0 border-t border-border pt-6">
               {["Purchased", "Day 1", "Day 2", "Day 3", "Final day"].map((label, i) => <div key={label} className="flex min-w-0 flex-1 items-center"><div className="flex flex-col items-center gap-2"><span className={`grid h-7 w-7 place-items-center rounded-full ${i < 3 ? "bg-navy-deep text-porcelain" : "border border-border bg-porcelain text-slate"}`}>{i < 3 ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5" />}</span><span className="text-center text-[0.68rem] text-slate">{label}</span></div>{i < 4 ? <span className="mx-2 mt-[-1.2rem] h-px flex-1 bg-border" /> : null}</div>)}
@@ -177,11 +166,11 @@ function Index() {
           </div>
           <div>
             <SectionHeading
-              eyebrow="Settlement"
+              eyebrow="Daily checks"
               title={
                 <>
                   Built on market data.{" "}
-                  <span className="font-display italic">Settled by consensus.</span>
+                  <span className="font-display italic">Checked automatically.</span>
                 </>
               }
             />
@@ -189,18 +178,18 @@ function Index() {
               {[
                 {
                   id: "ref",
-                  q: "Locked reference price",
-                  a: "The reference price is read from Gate at the moment of purchase and stored with your protection. Your trigger price is derived from it and never moves.",
+                  q: "Your starting price",
+                  a: "Your starting price is recorded when you buy protection and stays the same for the full coverage period.",
                 },
                 {
                   id: "dual",
-                  q: "Dual-source settlement",
-                  a: "Each covered day is settled against Binance and Gate historical daily closes. Both must be at or below the trigger for a breach; disagreement is inconclusive and retried.",
+                  q: "Verified daily checks",
+                  a: "Each completed day is checked using verified market prices. If the information does not agree, the check is tried again.",
                 },
                 {
                   id: "payout",
-                  q: "Automatic claimability, fixed payout",
-                  a: "Once a breach is confirmed, the protection becomes claimable for its fixed payout. Nothing is discretionary and no additional evidence is requested from you.",
+                  q: "Fixed payout",
+                  a: "If the protected price is reached, your protection becomes ready to claim for the fixed payout shown at purchase.",
                 },
               ].map((item) => (
                 <AccordionItem key={item.id} value={item.id}>
@@ -228,11 +217,11 @@ function Index() {
           {[
             {
               t: "Choose protection",
-              d: "Pick a market, a drop threshold of 1–3% and a coverage period of 7, 14 or 30 days.",
+              d: "Pick a market, a 1–3% drop and a coverage period of 7, 14 or 30 days.",
             },
             {
               t: "Lock terms",
-              d: "Pay the fixed GEN premium. The reference price is captured from Gate and stored on-chain with your trigger.",
+              d: "Pay the fixed GEN premium. Your starting price and protected price are recorded with your protection.",
             },
             {
               t: "Settle from verified data",
@@ -253,7 +242,7 @@ function Index() {
         <SectionHeading
           eyebrow="Products"
           title="Protection across three energy benchmarks"
-          lead="Same mechanics, same transparency, tuned to each market's source symbols."
+          lead="Choose a market, drop level and coverage period that fits your needs."
         />
         <div className="mt-12 grid gap-6 md:grid-cols-3">
           {(markets ?? []).map((m) => (
@@ -273,10 +262,6 @@ function Index() {
                   <dt className="text-slate">Durations</dt>
                   <dd className="text-ink">{DURATIONS.join(" · ")} days</dd>
                 </div>
-                <div className="flex justify-between">
-                  <dt className="text-slate">Premium from</dt>
-                  <dd className="font-semibold text-navy-deep">{gen(getTerms(7, 1).premium)}</dd>
-                </div>
               </dl>
               <Button asChild variant="outline" className="mt-6">
                 <Link to="/protect">Protect {m.shortName}</Link>
@@ -287,35 +272,6 @@ function Index() {
             ? [0, 1, 2].map((i) => <Skeleton key={i} className="h-80 rounded-xl" />)
             : null}
         </div>
-      </Section>
-
-      {/* Stats */}
-      <Section>
-        <SectionHeading
-          eyebrow="Transparency"
-          title="Protocol state, published openly"
-          lead="Pool reserves and outstanding liability are visible at all times. Figures below are demo data."
-        />
-        <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          {pool
-            ? [
-                { l: "Pool balance", v: gen(pool.poolBalance) },
-                { l: "Reserved liability", v: gen(pool.reservedLiability) },
-                { l: "Active protections", v: pool.activeProtections.toLocaleString() },
-                { l: "Payouts paid", v: gen(pool.payoutsPaid) },
-              ].map((s) => (
-                <div key={s.l} className="rounded-xl border border-border bg-card p-6">
-                  <p className="text-xs font-medium text-slate">{s.l}</p>
-                  <p className="mt-2 text-2xl font-semibold tabular-nums text-navy-deep">{s.v}</p>
-                </div>
-              ))
-            : [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
-        </div>
-        <Button asChild variant="ghost" className="mt-8">
-          <Link to="/transparency">
-            See full transparency report <ArrowRight />
-          </Link>
-        </Button>
       </Section>
 
       {/* CTA */}

@@ -4,8 +4,9 @@ import { ExternalLink, Github, ShieldCheck } from "lucide-react";
 import { Section, SectionHeading } from "@/components/commoda/Section";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { poolQuery, marketsQuery } from "@/lib/commoda/queries";
+import { poolQuery, marketsQuery, configQuery } from "@/lib/commoda/queries";
 import { gen } from "@/lib/commoda/format";
+import { COMMODA_CONTRACT_ADDRESS, GENLAYER_CHAIN, CONTRACT_EXPLORER, GITHUB_URL } from "@/lib/commoda/config";
 
 export const Route = createFileRoute("/transparency")({
   head: () => ({
@@ -29,6 +30,7 @@ export const Route = createFileRoute("/transparency")({
 function TransparencyPage() {
   const { data: pool, isPending } = useQuery(poolQuery);
   const { data: markets } = useQuery(marketsQuery);
+  const { data: config } = useQuery(configQuery);
 
   const stats = pool
     ? [
@@ -41,7 +43,7 @@ function TransparencyPage() {
 
   return (
     <>
-      <Section tone="navy" className="grid-motif">
+      <Section tone="navy">
         <SectionHeading
           tone="light"
           eyebrow="Transparency"
@@ -71,8 +73,8 @@ function TransparencyPage() {
         </div>
         {pool ? (
           <p className="mt-5 text-sm text-slate">
-            Pool utilisation: <span className="font-semibold text-ink">{pool.utilisationPct}%</span>{" "}
-            of reserves are committed against open protections. Demo values.
+            Pool utilisation: <span className="font-semibold text-ink">{pool.utilisationPct.toFixed(2)}%</span>{" "}
+            of reserves are committed against open protections.
           </p>
         ) : null}
       </Section>
@@ -180,12 +182,13 @@ function TransparencyPage() {
         </div>
 
         <div className="mt-12 flex flex-wrap gap-3">
-          <Button variant="onDark" size="lg" disabled>
-            <ExternalLink /> Contract Explorer — coming soon
-          </Button>
-          <Button variant="onDark" size="lg" disabled>
-            <Github /> GitHub — coming soon
-          </Button>
+          <a className="inline-flex items-center gap-2 border border-porcelain/25 px-4 py-2 text-sm text-porcelain" href={`${CONTRACT_EXPLORER}/address/${COMMODA_CONTRACT_ADDRESS}`} target="_blank" rel="noreferrer"><ExternalLink /> Contract Explorer</a>
+          <a className="inline-flex items-center gap-2 border border-porcelain/25 px-4 py-2 text-sm text-porcelain" href={GITHUB_URL} target="_blank" rel="noreferrer"><Github /> GitHub</a>
+        </div>
+        <div className="mt-10 grid gap-4 border-t border-porcelain/12 pt-8 text-sm text-porcelain/75 sm:grid-cols-3">
+          <p><span className="block text-xs uppercase tracking-[0.14em] text-amber">Network</span>{GENLAYER_CHAIN.name}</p>
+          <p><span className="block text-xs uppercase tracking-[0.14em] text-amber">Contract</span>{COMMODA_CONTRACT_ADDRESS}</p>
+          <p><span className="block text-xs uppercase tracking-[0.14em] text-amber">Status</span>{config ? "Connected" : "Loading"}</p>
         </div>
       </Section>
     </>

@@ -14,6 +14,7 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { Toaster } from "@/components/ui/sonner";
+import { WalletProvider } from "@/lib/commoda/wallet";
 
 function NotFoundComponent() {
   return (
@@ -91,7 +92,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         property: "og:description",
         content:
-          "Predefined triggers, fixed payouts, dual-source settlement for commodity price drop protection.",
+          "Predefined price drops, fixed payouts and verified daily checks for commodity protection.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -135,14 +136,16 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="flex min-h-screen flex-col bg-porcelain">
-        <Header />
-        <main className="flex-1">
+      <WalletProvider>
+        <div className="flex min-h-screen flex-col bg-porcelain">
+          <Header />
+          <main className="flex-1">
           {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
           <Outlet />
-        </main>
-        <Footer />
-      </div>
+          </main>
+          <Footer />
+        </div>
+      </WalletProvider>
       <Toaster />
     </QueryClientProvider>
   );

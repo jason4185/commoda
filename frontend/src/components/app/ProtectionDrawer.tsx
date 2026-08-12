@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { ResultBadge, StateBadge } from "@/components/commoda/StateBadge";
 import { MARKETS, priceDigits } from "@/lib/commoda/markets";
 import { dateLabel, gen, shortDate, usd } from "@/lib/commoda/format";
+import { canClaimProtection, getDayResultLabel, getSettlementAction } from "@/lib/commoda/service";
 import type { Protection } from "@/lib/commoda/types";
 
 interface Props {
@@ -33,8 +34,8 @@ export function ProtectionDrawer({
   const market = MARKETS[protection.market];
   const digits = priceDigits(protection.market);
   const settledDays = protection.days.filter((d) => d.result !== "UNPROCESSED").length;
-  const canSettle = protection.state === "ACTIVE" && settledDays < protection.duration;
-  const canClaim = protection.state === "CLAIMABLE";
+  const settlementAction = getSettlementAction(protection);
+  const canClaim = canClaimProtection(protection);
   const busy = pendingAction?.id === protection.id;
 
   return (
@@ -52,37 +53,26 @@ export function ProtectionDrawer({
 
         <div className="space-y-6 px-4 pb-8">
           <dl className="grid grid-cols-2 gap-4 border border-border bg-sand/50 p-4 text-sm">
-            <Item label="Locked reference" value={usd(protection.referencePrice, digits)} />
-            <Item label="Trigger price" value={usd(protection.triggerPrice, digits)} />
-            <Item label="Premium paid" value={gen(protection.premium)} />
-            <Item label="Fixed payout" value={gen(protection.payout)} />
-            <Item label="Coverage start" value={dateLabel(protection.startDate)} />
-            <Item label="Coverage end" value={dateLabel(protection.endDate)} />
+            <Item label="Starting price" value={usd(protection.referencePrice, digits)} />
+            <Item label="Protected price" value={usd(protection.triggerPrice, digits)} />
+            <Item label="Premium" value={gen(protection.premium)} />
+            <Item label="Payout" value={gen(protection.payout)} />
+            <Item label="Purchase date" value={dateLabel(protection.startDate)} />
+            <Item label="Coverage" value={`${protection.duration} days`} />
           </dl>
 
           <div className="flex flex-wrap gap-3">
-            <Button
-              variant="outline"
-              disabled={!canSettle || busy}
-              onClick={() => onSettle(protection.id)}
-            >
-              {busy && pendingAction?.kind === "settle" ? (
-                <>
-                  <Loader2 className="animate-spin" /> Settling…
-                </>
-              ) : (
-                "Settle next day"
-              )}
-            </Button>
-            <Button variant="accent" disabled={!canClaim || busy} onClick={() => onClaim(protection.id)}>
+            {settlementAction !== "NONE" ? <Button variant="outline" disabled={busy} onClick={() => onSettle(protection.id)}>{busy && pendingAction?.kind === "settle" ? <><Loader2 className="animate-spin" /> Checking…</> : settlementAction === "RETRY" ? "Retry Settlement" : "Settle Now"}</Button> : null}
+            {canClaim ? <Button variant="accent" disabled={busy} onClick={() => onClaim(protection.id)}>
               {busy && pendingAction?.kind === "claim" ? (
                 <>
                   <Loader2 className="animate-spin" /> Claiming…
                 </>
               ) : (
-                `Claim ${gen(protection.payout)}`
+                "Claim Payout"
               )}
-            </Button>
+            </Button> : null}
+            {protection.state === "CLAIMED" ? <span className="self-center text-sm font-semibold text-success">Paid</span> : null}
           </div>
 
           <div>
@@ -101,9 +91,7 @@ export function ProtectionDrawer({
                       Day {d.day} · {shortDate(d.date)}
                     </p>
                     <p className="mt-0.5 truncate text-xs text-slate">
-                      {d.binanceClose !== null && d.gateClose !== null
-                        ? `Binance ${usd(d.binanceClose, digits)} · Gate ${usd(d.gateClose, digits)}`
-                        : "Awaiting settlement"}
+                      {getDayResultLabel(d.result)}
                     </p>
                     {d.note ? <p className="mt-1 text-xs text-warning">{d.note}</p> : null}
                   </div>
@@ -113,15 +101,20 @@ export function ProtectionDrawer({
             </ol>
           </div>
 
-          <div className="rounded-xl border border-border bg-card p-4">
-            <h3 className="text-sm font-semibold text-navy-deep">Evidence summary</h3>
-            <p className="mt-2 text-xs leading-relaxed text-slate">
-              Settlement compares the Binance ({market.binanceSymbol}) and Gate ({market.gateSymbol})
-              historical daily closes against the trigger price stored at purchase. A day is only
-              recorded as breached when both sources report a close at or below{" "}
-              {usd(protection.triggerPrice, digits)}.
+          <details className="border border-border bg-card p-4">
+            <summary className="cursor-pointer text-sm font-semibold text-navy-deep">Verification details</summary>
+            <p className="mt-3 text-xs leading-relaxed text-slate">
+              Each completed day is checked against your protected price using verified market prices.
             </p>
-          </div>
+            {protection.days.filter((d) => d.binanceClose !== null || d.gateClose !== null).map((d) => (
+              <dl key={d.day} className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-3 text-xs">
+                <Item label="Settlement date" value={shortDate(d.date)} />
+                <Item label="Verification result" value={getDayResultLabel(d.result)} />
+                <Item label="Price check 1" value={d.binanceClose === null ? "—" : usd(d.binanceClose, digits)} />
+                <Item label="Price check 2" value={d.gateClose === null ? "—" : usd(d.gateClose, digits)} />
+              </dl>
+            ))}
+          </details>
         </div>
       </SheetContent>
     </Sheet>

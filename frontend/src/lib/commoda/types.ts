@@ -15,8 +15,8 @@ export interface Market {
   description: string;
   binanceSymbol: string;
   gateSymbol: string;
-  referencePrice: number;
-  change24hPct: number;
+  referencePrice: number | null;
+  change24hPct: number | null;
   available: boolean;
 }
 
@@ -41,7 +41,7 @@ export interface Protection {
   market: MarketId;
   drop: DropPct;
   duration: DurationDays;
-  referencePrice: number;
+  referencePrice: number | null;
   triggerPrice: number;
   premium: number;
   payout: number;
@@ -49,6 +49,12 @@ export interface Protection {
   endDate: string;
   state: ProtectionState;
   days: SettlementDay[];
+  nextDate?: string;
+  breachDate?: string;
+  lastResult?: DayResult;
+  canSettle?: boolean;
+  retryRequired?: boolean;
+  canClaim?: boolean;
 }
 
 export interface PoolStats {

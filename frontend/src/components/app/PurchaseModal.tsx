@@ -19,7 +19,7 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   market: Market;
   terms: Terms;
-  previewTrigger: number;
+  previewTrigger: number | null;
   startDate: string;
   endDate: string;
   isSubmitting: boolean;
@@ -57,15 +57,15 @@ export function PurchaseModal({
               </span>
               <DialogTitle className="mt-3">Protection confirmed</DialogTitle>
               <DialogDescription>
-                Reference price locked at {usd(result.referencePrice, digits)} · trigger{" "}
+                Starting price {usd(result.referencePrice, digits)} · protected price{" "}
                 {usd(result.triggerPrice, digits)}.
               </DialogDescription>
             </DialogHeader>
             <dl className="mt-2 space-y-2.5 rounded-lg border border-border bg-sand/60 p-4 text-sm">
               <Row label="Protection ID" value={result.id} />
               <Row label="Market" value={market.name} />
-              <Row label="Premium paid" value={gen(result.premium)} />
-              <Row label="Fixed payout" value={gen(result.payout)} />
+              <Row label="Premium" value={gen(result.premium)} />
+              <Row label="Payout" value={gen(result.payout)} />
               <Row label="Coverage" value={`${dateLabel(result.startDate)} → ${dateLabel(result.endDate)}`} />
             </dl>
             <DialogFooter>
@@ -82,26 +82,23 @@ export function PurchaseModal({
             <DialogHeader>
               <DialogTitle>Review transaction</DialogTitle>
               <DialogDescription>
-                Confirm the terms below. The reference price is read from Gate and locked when the
-                transaction is confirmed.
+                Confirm your protection. Your starting price is recorded when the purchase completes.
               </DialogDescription>
             </DialogHeader>
 
             <dl className="space-y-2.5 rounded-lg border border-border bg-sand/60 p-4 text-sm">
               <Row label="Market" value={market.name} />
-              <Row label="Drop trigger" value={`${terms.drop}% below reference`} />
+              <Row label="Drop protection" value={`${terms.drop}% drop`} />
               <Row label="Duration" value={`${terms.duration} days`} />
               <Row label="Coverage" value={`${dateLabel(startDate)} → ${dateLabel(endDate)}`} />
-              <Row label="Preview trigger" value={usd(previewTrigger, digits)} />
+              <Row label="Protected price" value={usd(previewTrigger, digits)} />
               <div className="border-t border-border pt-2.5" />
-              <Row label="Premium (debited now)" value={gen(terms.premium)} strong />
-              <Row label="Fixed payout if breached" value={gen(terms.payout)} strong />
+              <Row label="Premium" value={gen(terms.premium)} strong />
+              <Row label="Payout if protected price is reached" value={gen(terms.payout)} strong />
             </dl>
 
             <p className="text-xs leading-relaxed text-slate">
-              Settlement uses Binance and Gate historical daily closes. Both must report a close at
-              or below the stored trigger for a covered day to be recorded as breached. Demo wallet
-              — no real funds move.
+              Each completed day is checked using verified market prices.
             </p>
 
             {error ? (

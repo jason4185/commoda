@@ -24,6 +24,6 @@ export const TERMS_TABLE: Terms[] = DURATIONS.flatMap((d) =>
   DROPS.map((p) => getTerms(d, p)),
 );
 
-export function triggerPrice(reference: number, drop: DropPct): number {
-  return reference * (1 - drop / 100);
+export function triggerPrice(reference: number | null, drop: DropPct): number | null {
+  return reference === null ? null : reference * (1 - drop / 100);
 }

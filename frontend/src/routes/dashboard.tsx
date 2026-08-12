@@ -7,11 +7,16 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StateBadge, ResultBadge } from "@/components/commoda/StateBadge";
 import { ProtectionDrawer } from "@/components/app/ProtectionDrawer";
-import { protectionsQuery, qk } from "@/lib/commoda/queries";
-import { commodaService } from "@/lib/commoda/service";
+import { protectionsQuery, qk, summaryQuery, attentionQuery, protectionQuery } from "@/lib/commoda/queries";
+import {
+  canClaimProtection,
+  commodaService,
+  getSettlementAction,
+} from "@/lib/commoda/service";
 import { MARKETS, priceDigits } from "@/lib/commoda/markets";
 import { dateLabel, gen, usd } from "@/lib/commoda/format";
 import type { Protection } from "@/lib/commoda/types";
+import { useWallet } from "@/lib/commoda/wallet";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -34,17 +39,22 @@ export const Route = createFileRoute("/dashboard")({
 
 function DashboardPage() {
   const queryClient = useQueryClient();
-  const { data, isPending, isError, refetch } = useQuery(protectionsQuery);
+  const wallet = useWallet();
+  const owner = wallet.address ?? "";
+  const { data, isPending, isError, refetch } = useQuery(protectionsQuery(owner));
+  const { data: userSummary } = useQuery(summaryQuery(owner));
+  useQuery(attentionQuery(owner));
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<"ALL" | Protection["state"]>("ALL");
+  const [filter, setFilter] = useState<"ALL" | Protection["state"] | "READY_TO_SETTLE">("ALL");
   const [pendingAction, setPendingAction] = useState<{
     id: string;
     kind: "settle" | "claim";
   } | null>(null);
 
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: qk.protections });
-    queryClient.invalidateQueries({ queryKey: qk.wallet });
+    queryClient.invalidateQueries({ queryKey: qk.protections(owner) });
+    queryClient.invalidateQueries({ queryKey: qk.summary(owner) });
+    queryClient.invalidateQueries({ queryKey: qk.attention(owner) });
     queryClient.invalidateQueries({ queryKey: qk.pool });
   };
 
@@ -74,18 +84,25 @@ function DashboardPage() {
   });
 
   const allProtections = data ?? [];
-  const protections = allProtections.filter((p) => filter === "ALL" || p.state === filter);
-  const selected = protections.find((p) => p.id === selectedId) ?? null;
+  const protections = allProtections.filter(
+    (p) => filter === "ALL" || (filter === "READY_TO_SETTLE" ? getSettlementAction(p) !== "NONE" : p.state === filter),
+  );
+  const selected = allProtections.find((p) => p.id === selectedId) ?? null;
+  const { data: selectedDetail } = useQuery(protectionQuery(selectedId ?? ""));
 
   const summary = [
-    { label: "Active protections", value: allProtections.filter((p) => p.state === "ACTIVE").length.toString() },
-    { label: "Claimable", value: allProtections.filter((p) => p.state === "CLAIMABLE").length.toString() },
-    { label: "Total premiums", value: gen(allProtections.reduce((a, p) => a + p.premium, 0)) },
-    {
-      label: "Potential payout",
-      value: gen(allProtections.filter((p) => p.state === "CLAIMABLE").reduce((a, p) => a + p.payout, 0)),
-    },
+    { label: "Total", value: String(userSummary?.total ?? allProtections.length) },
+    { label: "Active", value: String(userSummary?.active ?? allProtections.filter((p) => p.state === "ACTIVE").length) },
+    { label: "Ready to settle", value: allProtections.filter((p) => getSettlementAction(p) !== "NONE").length.toString() },
+    { label: "Ready to claim", value: String(userSummary?.claimable ?? allProtections.filter(canClaimProtection).length) },
+    { label: "Ended", value: String(userSummary?.expired ?? allProtections.filter((p) => p.state === "EXPIRED").length) },
+    { label: "Claimed", value: String(userSummary?.claimed ?? allProtections.filter((p) => p.state === "CLAIMED").length) },
+    { label: "Premiums paid", value: userSummary ? gen(Number(userSummary.premiums) / 1e18) : gen(allProtections.reduce((a, p) => a + p.premium, 0)) },
+    { label: "Claimable payout", value: userSummary ? gen(Number(userSummary.claimable_payout) / 1e18) : gen(0) },
+    { label: "Payouts received", value: userSummary ? gen(Number(userSummary.payouts) / 1e18) : gen(0) },
   ];
+
+  const attention = allProtections.filter((p) => getSettlementAction(p) !== "NONE" || canClaimProtection(p));
 
   return (
     <div className="bg-porcelain">
@@ -94,7 +111,7 @@ function DashboardPage() {
           <div className="min-w-0">
             <p className="eyebrow text-slate">Dashboard</p>
             <h1 className="mt-2 truncate text-3xl font-semibold text-navy-deep sm:text-4xl">
-              Good afternoon / portfolio
+              My protections
             </h1>
           </div>
           <Button asChild variant="accent" className="shrink-0">
@@ -102,11 +119,11 @@ function DashboardPage() {
           </Button>
         </header>
 
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-10 grid overflow-hidden border border-border bg-card sm:grid-cols-2 lg:grid-cols-5">
           {isPending
-            ? [0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-24 rounded-xl" />)
-            : summary.slice(0, 4).map((s) => (
-                <div key={s.label} className="border border-border bg-card p-5">
+            ? [0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-24" />)
+            : summary.map((s) => (
+                <div key={s.label} className="border-b border-r border-border p-4 last:border-r-0 lg:p-5">
                   <p className="text-xs font-medium text-slate">{s.label}</p>
                   <p className="mt-2 text-2xl font-semibold tabular-nums text-navy-deep">
                     {s.value}
@@ -116,7 +133,12 @@ function DashboardPage() {
         </div>
 
         <div className="mt-10">
-          {isError ? (
+          {!wallet.address ? (
+            <div className="border border-border bg-card p-14 text-center">
+              <h2 className="text-lg font-semibold text-navy-deep">Connect your wallet to view your protections.</h2>
+              <Button variant="accent" className="mt-6" onClick={wallet.connect}>Connect Wallet</Button>
+            </div>
+          ) : isError ? (
             <div className="rounded-xl border border-danger/25 bg-danger/5 p-10 text-center">
               <p className="font-medium text-danger">Protections could not be loaded.</p>
               <Button variant="outline" className="mt-4" onClick={() => refetch()}>
@@ -141,10 +163,32 @@ function DashboardPage() {
             </div>
           ) : (
             <div>
+              {attention.length > 0 ? (
+                <section className="mb-10 border border-border bg-card p-5">
+                  <p className="eyebrow text-slate">Needs attention</p>
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    {attention.map((p) => {
+                      const action = getSettlementAction(p);
+                      const label = canClaimProtection(p)
+                        ? "Payout ready"
+                        : action === "RETRY"
+                          ? "Settlement retry"
+                          : "Settlement ready";
+                      return (
+                        <button key={p.id} onClick={() => setSelectedId(p.id)} className="border border-border p-4 text-left hover:border-navy/35">
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate">{label}</p>
+                          <p className="mt-2 font-semibold text-navy-deep">{p.id} · {MARKETS[p.market].shortName}</p>
+                          <p className="mt-3 text-sm text-amber">{canClaimProtection(p) ? "Claim Payout" : action === "RETRY" ? "Retry Settlement" : "Settle Now"}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : null}
               <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-y border-border py-3">
                 <h2 className="text-xl font-semibold text-navy-deep">Your protections</h2>
                 <div className="flex flex-wrap gap-1">
-                  {(["ALL", "ACTIVE", "CLAIMABLE", "EXPIRED", "CLAIMED"] as const).map((value) => <button key={value} onClick={() => setFilter(value)} className={`px-3 py-1.5 text-xs font-semibold transition-colors ${filter === value ? "bg-navy-deep text-porcelain" : "text-slate hover:bg-sand hover:text-ink"}`}>{value === "ALL" ? "All" : value[0] + value.slice(1).toLowerCase()}</button>)}
+                  {(["ALL", "ACTIVE", "READY_TO_SETTLE", "CLAIMABLE", "EXPIRED", "CLAIMED"] as const).map((value) => <button key={value} onClick={() => setFilter(value)} className={`px-3 py-1.5 text-xs font-semibold transition-colors ${filter === value ? "bg-navy-deep text-porcelain" : "text-slate hover:bg-sand hover:text-ink"}`}>{value === "ALL" ? "All" : value === "ACTIVE" ? "Active" : value === "READY_TO_SETTLE" ? "Ready to settle" : value === "CLAIMABLE" ? "Ready to claim" : value === "EXPIRED" ? "Ended" : "Claimed"}</button>)}
                 </div>
               </div>
               <div className="space-y-3">
@@ -164,12 +208,12 @@ function DashboardPage() {
         </div>
 
         <p className="mt-8 text-xs text-slate">
-          Demo data. Settlement and claim actions run against a mock contract service.
+          Protection data and actions come from the Commoda contract.
         </p>
       </div>
 
       <ProtectionDrawer
-        protection={selected}
+        protection={selectedDetail ?? selected}
         open={Boolean(selected)}
         onOpenChange={(v) => !v && setSelectedId(null)}
         onSettle={(id) => settle.mutate(id)}
@@ -196,7 +240,8 @@ function ProtectionRow({
   const market = MARKETS[p.market];
   const digits = priceDigits(p.market);
   const settled = p.days.filter((d) => d.result !== "UNPROCESSED").length;
-  const nextDay = p.days.find((d) => d.result === "UNPROCESSED");
+  const nextDay = p.days.find((d) => d.result === "INCONCLUSIVE") ?? p.days.find((d) => d.result === "UNPROCESSED");
+  const action = getSettlementAction(p);
   const lastResult = [...p.days].reverse().find((d) => d.result !== "UNPROCESSED");
   const busy = pendingAction?.id === p.id;
 
@@ -218,9 +263,9 @@ function ProtectionRow({
           <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
             <Cell label="Market" value={market.shortName} />
             <Cell label="Drop" value={`${p.drop}%`} />
-            <Cell label="Reference" value={usd(p.referencePrice, digits)} />
-            <Cell label="Trigger" value={usd(p.triggerPrice, digits)} />
-            <Cell label="Settled days" value={`${settled}/${p.duration}`} />
+            <Cell label="Starting price" value={usd(p.referencePrice, digits)} />
+            <Cell label="Protected price" value={usd(p.triggerPrice, digits)} />
+            <Cell label="Days checked" value={`${settled}/${p.duration}`} />
             <Cell
               label="Next settlement"
               value={nextDay ? dateLabel(nextDay.date) : "—"}
@@ -232,28 +277,10 @@ function ProtectionRow({
           <Button variant="ghost" onClick={onOpen}>
             Details
           </Button>
-          <Button
-            variant="outline"
-            disabled={p.state !== "ACTIVE" || !nextDay || busy}
-            onClick={onSettle}
-          >
-            {busy && pendingAction?.kind === "settle" ? (
-              <>
-                <Loader2 className="animate-spin" /> Settling…
-              </>
-            ) : (
-              "Settle"
-            )}
-          </Button>
-          <Button variant="accent" disabled={p.state !== "CLAIMABLE" || busy} onClick={onClaim}>
-            {busy && pendingAction?.kind === "claim" ? (
-              <>
-                <Loader2 className="animate-spin" /> Claiming…
-              </>
-            ) : (
-              "Claim Payout"
-            )}
-          </Button>
+          {action !== "NONE" ? <Button variant="outline" disabled={busy} onClick={onSettle}>{busy && pendingAction?.kind === "settle" ? <><Loader2 className="animate-spin" /> Checking…</> : action === "RETRY" ? "Retry Settlement" : "Settle Now"}</Button> : null}
+          {canClaimProtection(p) ? <Button variant="accent" disabled={busy} onClick={onClaim}>{busy && pendingAction?.kind === "claim" ? <><Loader2 className="animate-spin" /> Claiming…</> : "Claim Payout"}</Button> : null}
+          {p.state === "CLAIMED" ? <span className="self-center text-sm font-semibold text-success">Paid</span> : null}
+          {p.state === "ACTIVE" && action === "NONE" && nextDay ? <span className="self-center text-xs text-slate">Next check: {dateLabel(nextDay.date)}</span> : null}
         </div>
       </div>
     </article>

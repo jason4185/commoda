@@ -12,9 +12,9 @@ const stateStyles: Record<ProtectionState, string> = {
 
 const stateLabels: Record<ProtectionState, string> = {
   ACTIVE: "Active",
-  CLAIMABLE: "Claimable",
-  EXPIRED: "Expired",
-  CLAIMED: "Claimed",
+  CLAIMABLE: "Ready to claim",
+  EXPIRED: "Ended",
+  CLAIMED: "Paid",
 };
 
 export function StateBadge({ state }: { state: ProtectionState }) {
@@ -34,10 +34,10 @@ const resultStyles: Record<DayResult, string> = {
 };
 
 const resultLabels: Record<DayResult, string> = {
-  UNPROCESSED: "Unprocessed",
-  BREACHED: "Breached",
-  NOT_BREACHED: "Not breached",
-  INCONCLUSIVE: "Inconclusive",
+  UNPROCESSED: "Not checked yet",
+  BREACHED: "Protected price reached",
+  NOT_BREACHED: "No protected drop",
+  INCONCLUSIVE: "Checking again",
 };
 
 export function ResultBadge({ result }: { result: DayResult }) {

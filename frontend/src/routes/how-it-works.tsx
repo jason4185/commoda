@@ -16,12 +16,12 @@ export const Route = createFileRoute("/how-it-works")({
       {
         name: "description",
         content:
-          "From locked purchase reference price to daily dual-source settlement, breach outcomes and claims — how Commoda drop protection resolves.",
+          "A simple guide to choosing protection, checking prices each day and receiving a fixed payout.",
       },
       { property: "og:title", content: "How Drop Protection Works | Commoda" },
       {
         property: "og:description",
-        content: "Purchase reference, coverage days, daily settlement, breach outcomes, claim or expiry.",
+        content: "Choose protection, follow daily price checks and claim a fixed payout if the protected price is reached.",
       },
     ],
   }),
@@ -31,44 +31,44 @@ export const Route = createFileRoute("/how-it-works")({
 const STEPS = [
   {
     icon: Lock,
-    title: "Purchase reference",
-    body: "At purchase the reference price is read from Gate and stored with your protection. Your trigger price is that reference minus your chosen drop.",
+    title: "Choose a commodity",
+    body: "Select WTI, Brent or Natural Gas.",
   },
   {
     icon: Timer,
-    title: "Coverage days",
-    body: "Coverage runs for 7, 14 or 30 consecutive days. Each covered day is settled independently against the stored trigger.",
+    title: "Choose your protection",
+    body: "Pick a 1%, 2% or 3% drop and a 7, 14 or 30 day period.",
   },
   {
     icon: CheckCircle2,
-    title: "Daily settlement",
-    body: "For each covered day the protocol fetches the daily close from Binance and Gate and compares both against the stored trigger price.",
+    title: "Buy protection",
+    body: "Pay the fixed premium and your starting price is recorded.",
   },
   {
     icon: Coins,
-    title: "Claim or expiry",
-    body: "The first confirmed breach makes the protection claimable for its fixed payout. With no breach across all covered days, it expires.",
+    title: "Daily price checks",
+    body: "After each completed day, Commoda checks whether the protected price was reached.",
   },
 ];
 
 const OUTCOMES = [
   {
     icon: CheckCircle2,
-    label: "Breached",
+    label: "Protected price reached",
     tone: "text-danger border-danger/25 bg-danger/5",
-    body: "Both Binance and Gate report a daily close at or below the stored trigger price. The protection becomes claimable for its fixed payout.",
+    body: "Your protection becomes ready to claim for its fixed payout.",
   },
   {
     icon: CircleSlash,
-    label: "Not breached",
+    label: "No protected drop",
     tone: "text-success border-success/25 bg-success/5",
-    body: "Both sources report a daily close above the trigger. The day is closed and coverage continues to the next day.",
+    body: "The day is complete and coverage continues to the next day.",
   },
   {
     icon: CircleAlert,
-    label: "Inconclusive",
+    label: "Checking again",
     tone: "text-warning border-warning/30 bg-warning/5",
-    body: "The sources disagree, or one is unavailable. The day is not resolved against you — it stays open and is retried until both sources agree.",
+    body: "The day stays open and is checked again. It does not count against your protection.",
   },
 ];
 
@@ -82,10 +82,10 @@ function HowItWorksPage() {
           title={
             <>
               A protection that resolves on{" "}
-              <span className="font-display text-amber italic">evidence, not opinion.</span>
+              <span className="font-display text-amber italic">simple and clear.</span>
             </>
           }
-          lead="Every outcome is determined by predefined terms and two independent market data sources. There is no discretionary assessment and no claims negotiation."
+          lead="Choose your terms up front, then let verified market prices determine the outcome."
         />
       </Section>
 
@@ -136,16 +136,16 @@ function HowItWorksPage() {
           <Accordion type="single" collapsible className="w-full">
             {[
               {
-                q: "How is the reference price set?",
-                a: "The purchase reference price is read from Gate at the moment of purchase and stored on the protection. It never changes afterwards, so your trigger is fixed for the whole coverage period.",
+                q: "When is my starting price recorded?",
+                a: "Your starting price is recorded when you buy protection. Your protected price is then calculated from the drop level you selected.",
               },
               {
-                q: "Why do two sources have to agree?",
-                a: "A single feed can be delayed, thin or wrong. Requiring Binance and Gate to independently confirm a daily close at or below the trigger removes single-source failure from the settlement path.",
+                q: "How are daily checks verified?",
+                a: "Commoda uses verified market prices and GenLayer validator checks before a day is marked complete.",
               },
               {
-                q: "What happens on an inconclusive day?",
-                a: "The day remains unresolved and is retried. It is never recorded as not breached, so a data outage cannot silently work against the protection holder.",
+                q: "What happens when a day cannot be confirmed?",
+                a: "The day stays open and is checked again. It is not marked as a clear day while the check is unresolved.",
               },
               {
                 q: "How large is the payout?",

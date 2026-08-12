@@ -1,13 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { ArrowUpRight } from "lucide-react";
 import { Section, SectionHeading } from "@/components/commoda/Section";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { marketsQuery } from "@/lib/commoda/queries";
+import { marketsQuery, marketTermsQuery } from "@/lib/commoda/queries";
 import { priceDigits } from "@/lib/commoda/markets";
-import { DROPS, DURATIONS, getTerms } from "@/lib/commoda/terms";
-import { gen, pct, usd } from "@/lib/commoda/format";
+import { DROPS, DURATIONS } from "@/lib/commoda/terms";
+import { gen } from "@/lib/commoda/format";
+import { LivePrice } from "@/components/commoda/LivePrice";
 
 export const Route = createFileRoute("/markets")({
   head: () => ({
@@ -16,12 +17,12 @@ export const Route = createFileRoute("/markets")({
       {
         name: "description",
         content:
-          "Supported Commoda markets: WTI Crude, Brent Crude and Natural Gas, with available drop levels, durations and settlement source symbols.",
+          "Choose simple price-drop protection for WTI, Brent Crude or Natural Gas.",
       },
       { property: "og:title", content: "Markets — WTI, Brent & Natural Gas | Commoda" },
       {
         property: "og:description",
-        content: "Drop levels, durations and dual-source settlement symbols for every Commoda market.",
+        content: "Compare Commoda protection options for WTI, Brent Crude and Natural Gas.",
       },
     ],
   }),
@@ -30,20 +31,16 @@ export const Route = createFileRoute("/markets")({
 
 function MarketsPage() {
   const { data: markets, isPending, isError, refetch } = useQuery(marketsQuery);
+  const termQueries = useQueries({ queries: (markets ?? []).map((m) => marketTermsQuery(m.id)) });
 
   return (
     <>
-      <Section tone="navy" className="grid-motif">
+      <Section tone="navy">
         <SectionHeading
           tone="light"
           eyebrow="Markets"
-          title={
-            <>
-              Three energy benchmarks.{" "}
-              <span className="font-display text-amber italic">One protection standard.</span>
-            </>
-          }
-          lead="Every market uses the same mechanics: a reference price locked at purchase, a predefined drop trigger, and daily settlement confirmed by two independent data sources."
+          title={<>Energy markets available for <span className="font-display text-amber italic">protection.</span></>}
+          lead="Choose what you want to protect, how much of a drop you want covered, and how long you want protection to last."
         />
       </Section>
 
@@ -65,6 +62,7 @@ function MarketsPage() {
           <div className="space-y-8">
             {markets.map((m) => {
               const digits = priceDigits(m.id);
+              const terms = termQueries[markets.findIndex((x) => x.id === m.id)]?.data as Array<{ duration: number; event_percent: number; premium: number; payout: number }> | undefined;
               return (
                 <article
                   key={m.id}
@@ -83,31 +81,20 @@ function MarketsPage() {
                           Available
                         </span>
                       </div>
-                      <p className="mt-4 max-w-xl leading-relaxed text-slate">{m.description}</p>
+                      <p className="mt-4 max-w-xl leading-relaxed text-slate">Protect against a predefined drop in {m.name.toLowerCase()} prices.</p>
 
                       <dl className="mt-7 grid gap-5 sm:grid-cols-3">
                         <div>
-                          <dt className="text-xs font-medium text-slate">Indicative price</dt>
+                          <dt className="text-xs font-medium text-slate">Live market price</dt>
                           <dd className="mt-1 text-xl font-semibold tabular-nums text-ink">
-                            {usd(m.referencePrice, digits)}
+                            <LivePrice market={m.id} />
                           </dd>
                           <dd className="text-xs text-slate">{m.unit}</dd>
                         </div>
                         <div>
-                          <dt className="text-xs font-medium text-slate">24h change</dt>
-                          <dd
-                            className={`mt-1 text-xl font-semibold tabular-nums ${
-                              m.change24hPct < 0 ? "text-danger" : "text-success"
-                            }`}
-                          >
-                            {pct(m.change24hPct)}
-                          </dd>
-                          <dd className="text-xs text-slate">demo data</dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs font-medium text-slate">Source symbols</dt>
-                          <dd className="mt-1 font-mono text-sm text-ink">{m.binanceSymbol}</dd>
-                          <dd className="font-mono text-sm text-ink">{m.gateSymbol}</dd>
+                          <dt className="text-xs font-medium text-slate">Available protection</dt>
+                          <dd className="mt-1 font-medium text-ink">1% · 2% · 3% drops</dd>
+                          <dd className="text-xs text-slate">7 · 14 · 30 days</dd>
                         </div>
                       </dl>
 
@@ -121,9 +108,9 @@ function MarketsPage() {
 
                     <div className="rounded-lg border border-border bg-sand/60 p-5">
                       <h3 className="text-sm font-semibold text-navy-deep">
-                        Available terms & fixed payouts
+                        Protection options
                       </h3>
-                      <p className="mt-1 text-xs text-slate">Premium and payout in GEN.</p>
+                      <p className="mt-1 text-xs text-slate">Choose how long you want protection and the drop level you want covered.</p>
                       <table className="mt-4 w-full text-sm">
                         <thead>
                           <tr className="text-left text-xs text-slate">
@@ -131,7 +118,7 @@ function MarketsPage() {
                             <th className="pb-2 font-medium">Premium</th>
                             {DROPS.map((d) => (
                               <th key={d} className="pb-2 text-right font-medium">
-                                {d}%
+                                {d}% Drop
                               </th>
                             ))}
                           </tr>
@@ -141,14 +128,14 @@ function MarketsPage() {
                             <tr key={dur} className="border-t border-border/70">
                               <td className="py-2.5 font-medium text-ink">{dur} days</td>
                               <td className="py-2.5 tabular-nums text-slate">
-                                {gen(getTerms(dur, 1).premium)}
+                                {terms ? gen(terms.find((t) => t.duration === dur && t.event_percent === 1)?.premium) : "—"}
                               </td>
                               {DROPS.map((d) => (
                                 <td
                                   key={d}
                                   className="py-2.5 text-right font-semibold tabular-nums text-ink"
                                 >
-                                  {getTerms(dur, d).payout}
+                                  {terms ? gen(terms.find((t) => t.duration === dur && t.event_percent === d)?.payout) : "—"}
                                 </td>
                               ))}
                             </tr>
@@ -157,6 +144,7 @@ function MarketsPage() {
                       </table>
                     </div>
                   </div>
+                  <p className="border-t border-border px-6 py-3 text-xs text-slate sm:px-9">Payouts are fixed when you purchase protection.</p>
                 </article>
               );
             })}
@@ -164,8 +152,7 @@ function MarketsPage() {
         )}
 
         <p className="mt-8 text-xs text-slate">
-          Prices shown are mock/demo values served through a single mock service. No live
-          third-party price feed is connected yet.
+          Live prices are informational. Your starting price is recorded by the contract when protection is purchased.
         </p>
       </Section>
     </>
