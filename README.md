@@ -132,19 +132,19 @@ Drop levels are `1%`, `2%`, and `3%`. The contract terms are fixed:
 
 ### Homepage and market overview
 
-`[Insert screenshot: Homepage]`
+![Commoda homepage](docs/images/commoda-homepage.png)
 
 Shows the supported commodity markets, current informational prices, and the path into protection selection.
 
 ### Get Protection flow
 
-`[Insert screenshot: Get Protection]`
+![Get Protection](docs/images/commoda-protection.png)
 
 Shows how a user selects a commodity, drop level, and coverage period before reviewing the contract-backed premium and payout.
 
 ### Dashboard and settlement management
 
-`[Insert screenshot: Dashboard]`
+![Commoda dashboard](docs/images/commoda-dashboard.png)
 
 Shows active protections, completed checks, claimable payouts, and the actions available when settlement or claiming is due.
 
