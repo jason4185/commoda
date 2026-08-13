@@ -2,9 +2,9 @@
 
 ## Commodity price protection on GenLayer
 
-Commoda offers fixed-payout price protection for major commodities. Users choose a market, a protected drop level, and a coverage period. If the protected price is reached during coverage, the payout becomes claimable.
+Commoda offers fixed-payout price protection across three curated commodity markets. Users choose a market, a protected drop level, and a coverage period. If the protected price is reached during coverage, the payout becomes claimable.
 
-Commoda checks real market data through GenLayer validator consensus. The contract records the starting price, applies fixed terms, verifies completed trading days, and manages the resulting payout and reserves.
+Commoda checks market data through GenLayer validator consensus. The contract records the starting price, applies fixed terms, verifies completed UTC coverage days, and manages the resulting payout and reserves.
 
 Commoda v1 supports three curated markets: WTI Crude Oil, Brent Crude Oil, and Natural Gas. It is a price-protection product, not a trading terminal, prediction market, or official exchange settlement product.
 
@@ -18,7 +18,7 @@ Commoda v1 supports three curated markets: WTI Crude Oil, Brent Crude Oil, and N
 
 ## Why Commoda
 
-Commodity prices can move quickly, while conventional protection products can be difficult to understand or settle. Commoda gives users a defined outcome before they buy:
+Commoda presents predefined protection terms and settlement rules in a simple, transparent format. Users receive a defined outcome before they buy:
 
 - a selected commodity;
 - a 1%, 2%, or 3% protected drop;
@@ -76,30 +76,35 @@ For example, a $82.00 starting price with 1% protection produces an $81.18 prote
 flowchart LR
     User --> Frontend[Commoda frontend]
     Frontend --> Wallet[Injected wallet]
-    Wallet --> Contract[CommodaProtection]
-    Frontend -. Informational price .-> BinanceLive[Binance live ticker]
-    Contract --> Validators[GenLayer validators]
-    Validators --> Gate[Gate purchase reference]
-    Validators --> Sources[Binance and Gate settlement data]
-    Validators --> Contract
+    Wallet --> Client[GenLayer client]
+    Client --> Contract[CommodaProtection contract]
+    Contract --> Leader[Contract leader fetch]
+    Leader --> Gate[Gate purchase reference]
+    Leader --> Sources[Binance and Gate settlement data]
+    Validators[GenLayer validators] -. Independent refetch .-> Gate
+    Validators -. Independent refetch .-> Sources
+    Validators -. Consensus evidence .-> Contract
     Contract --> State[Protection, payout, and reserve state]
     State --> Frontend
+    Frontend -. Informational price .-> Live[Binance live ticker]
 ```
 
-The frontend Binance ticker is informational only. It never determines the purchase premium, starting price, protected price, settlement result, or claimability. The contract and GenLayer validators are authoritative.
+The frontend Binance ticker is informational only. It never determines the purchase premium, starting price, protected price, settlement result, or claimability. The contract is authoritative for protocol state, while GenLayer validators provide the consensus evidence used by the contract.
 
 ## Protection lifecycle
 
 ```mermaid
 flowchart TD
-    Pool[Fund pool] --> Buy[Buy protection]
+    Pool[Pool liquidity available] --> Buy[Buy protection]
     Buy --> Lock[Record starting price and protected price]
     Lock --> Check[Check next completed UTC day]
-    Check --> Clear{Both sources clear?}
-    Clear -->|Yes, more days| Check
-    Clear -->|Yes, final day| Expired[EXPIRED]
-    Clear -->|Both reach protected price| Claimable[CLAIMABLE]
-    Clear -->|Sources disagree| Retry[INCONCLUSIVE: retry same day]
+    Check --> Outcome{Compare both source closes}
+    Outcome -->|Both above protected price| Clear[NOT_BREACHED]
+    Outcome -->|Both at or below protected price| Claimable[BREACHED: CLAIMABLE]
+    Outcome -->|Sources disagree| Retry[INCONCLUSIVE: retry same day]
+    Clear --> More{More days?}
+    More -->|Yes| Check
+    More -->|No| Expired[EXPIRED]
     Retry --> Check
     Claimable --> Claim[Owner claims fixed payout]
     Claim --> Claimed[CLAIMED]
@@ -176,7 +181,7 @@ Protection states are shown to users as:
 
 For purchase, the leader and validators independently fetch the matching Gate ticker. The observations must be within 5 bps before the starting price is accepted.
 
-For settlement, the contract requests the exact UTC daily candle or row for the stored date. Binance timestamps must match the target UTC midnight and its final millisecond; Gate must return the exact target-day row. Adjacent-day data is rejected. Validators independently verify source symbols, dates, timestamps, close values, and the resulting comparison.
+For settlement, the contract requests the exact UTC daily candle or row for the stored date. Binance timestamps must match the target UTC midnight and its final millisecond; Gate must return the exact target-day row. Adjacent-day data is rejected. Validators independently refetch the configured sources and verify the evidence values, dates, timestamps, and close prices before the contract computes the settlement result.
 
 ## Pool and reserve model
 
@@ -224,7 +229,7 @@ The frontend uses React, TypeScript, TanStack Router, TanStack Query, Wagmi, Rai
 - Public contract reads are wallet-independent.
 - Sender-aware reads are used for authorization-sensitive readiness and owner-specific views.
 - Dashboard loading uses bounded summary, attention, and owner-card reads rather than an unbounded N+1 loader.
-- Protection detail loads bounded history; evidence is loaded only when requested.
+- Protection detail loads bounded history. Verification evidence is available per completed day and is shown in the expandable verification section.
 - RainbowKit exposes an injected wallet connector only.
 - Signed writes use the active Wagmi connector provider, validate the selected account and Bradbury chain, and send the exact contract arguments and native GEN value.
 - Signed transactions are never automatically resubmitted.
@@ -311,7 +316,7 @@ genvm-lint typecheck contract/CommodaProtection.py
 
 The historical suite uses a test-only contract and mocked source responses for past-date scenarios. It does not change production contract authority.
 
-Latest recorded validation:
+Previously recorded validation results:
 
 | Check | Result |
 | --- | --- |
