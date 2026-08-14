@@ -277,8 +277,7 @@ The contract and direct test suites cover:
 ```text
 commoda/
 ├── contract/
-│   ├── CommodaProtection.py
-│   └── CommodaHistoricalTest.py
+│   └── CommodaProtection.py
 ├── frontend/
 │   ├── src/
 │   │   ├── lib/commoda/
@@ -290,8 +289,6 @@ commoda/
 │   └── architecture.md
 └── README.md
 ```
-
-`CommodaHistoricalTest.py` is test-only and is not the production deployment authority.
 
 ## Development and testing
 
@@ -314,15 +311,11 @@ genvm-lint schema contract/CommodaProtection.py
 genvm-lint typecheck contract/CommodaProtection.py
 ```
 
-The historical suite uses a test-only contract and mocked source responses for past-date scenarios. It does not change production contract authority.
-
 Previously recorded validation results:
 
 | Check | Result |
 | --- | --- |
 | Production-focused direct suite | 83 passed, 0 failed |
-| Complete direct suite | 91 passed, 0 failed |
-| Historical suite | 8 passed, 0 failed |
 | Frontend `bun x tsc --noEmit` | PASS |
 | Frontend `bun run build` | PASS |
 | GenVM lint and validation | PASS |
