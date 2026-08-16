@@ -19,6 +19,7 @@ export function getSettlementAction(p: Protection): SettlementAction { if (p.sta
 export function getCancellationAction(p: Protection): CancellationAction { return p.canCancel === true ? "CANCEL" : "NONE"; }
 export function canCancelProtection(p: Protection) { return p.canCancel === true; }
 export function canClaimProtection(p: Protection) { return p.canClaim ?? p.state === "CLAIMABLE"; }
+export function canPurchaseFromQuote(q: { enoughLiquidity?: boolean } | null | undefined) { return q?.enoughLiquidity === true; }
 
 function mapMarket(id: MarketId, data: any): Market { return { ...MARKETS[id], name: String(data?.display_name || MARKETS[id].name), available: true, referencePrice: null, change24hPct: null }; }
 function mapDay(d: any, i: number, purchase?: string): Protection["days"][number] { return { day: n(d.day ?? i + 1), date: isoDateOnly(d.date) ?? addDaysToIsoDate(purchase, i + 1) ?? "", result: d.status as DayResult, binanceClose: d.binance_close == null ? null : priceValue(d.binance_close), gateClose: d.gate_close == null ? null : priceValue(d.gate_close), ...(d.evidence_version == null ? {} : { evidenceVersion: n(d.evidence_version) }) }; }

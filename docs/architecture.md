@@ -53,12 +53,14 @@ close against its own trigger: both below/equal means `BREACHED`, both above
 means `NOT_BREACHED`, and disagreement means `INCONCLUSIVE`.
 
 Evidence retries create a new version instead of overwriting the old record.
-Each protection stores its own per-date result. `UNPROCESSED` and
-`INCONCLUSIVE` remain unresolved; the contract always settles the earliest
-unresolved date, so cached later evidence cannot skip an earlier day. A
-conclusive `BREACHED` or `NOT_BREACHED` result is immutable for that
-protection/day. Only unresolved or `INCONCLUSIVE` days may consume newer
-evidence versions; later versions never reopen a conclusive result.
+An `UNPROCESSED` protection day creates the initial market/date evidence when
+none is cached or reuses the current cached version; only an `INCONCLUSIVE`
+retry explicitly refreshes that market/date into a newer version. Each
+protection stores its own per-date result. `UNPROCESSED` and `INCONCLUSIVE`
+remain unresolved; the contract always settles the earliest unresolved date,
+so cached later evidence cannot skip an earlier day. A conclusive `BREACHED`
+or `NOT_BREACHED` result is immutable for that protection/day; later versions
+never reopen a conclusive result.
 
 If the earliest unresolved coverage date remains `UNPROCESSED` or
 `INCONCLUSIVE` through three complete UTC retry days, an authorized caller may

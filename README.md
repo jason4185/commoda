@@ -319,7 +319,7 @@ genvm-lint schema contract/CommodaProtection.py
 genvm-lint typecheck contract/CommodaProtection.py
 ```
 
-Historical settlement evidence is fail-closed. Binance/Gate disagreement remains `INCONCLUSIVE`, and unavailable or malformed source data does not fabricate a result. Only unresolved `UNPROCESSED` or `INCONCLUSIVE` protection days may consume newer versioned evidence; once a protection day is conclusively `BREACHED` or `NOT_BREACHED`, its result is not reopened or rewritten. After the bounded three-day retry window, the earliest unresolved day may be terminally cancelled, releasing its payout reserve and refunding the original premium without making a payout.
+Historical settlement evidence is fail-closed. Binance/Gate disagreement remains `INCONCLUSIVE`, and unavailable or malformed source data does not fabricate a result. An `UNPROCESSED` protection day creates the initial market/date evidence when none is cached or reuses the current cached version; only an `INCONCLUSIVE` retry explicitly refreshes that market/date into a newer version. Once a protection day is conclusively `BREACHED` or `NOT_BREACHED`, its result is not reopened or rewritten. After the bounded three-day retry window, the earliest unresolved day may be terminally cancelled, releasing its payout reserve and refunding the original premium without making a payout.
 
 The terminal policy refunds the full original premium, without prorating for earlier days that may already have been conclusively checked.
 

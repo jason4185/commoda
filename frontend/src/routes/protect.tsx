@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PurchaseModal } from "@/components/app/PurchaseModal";
 import { marketsQuery, qk, quoteQuery, marketTermsQuery } from "@/lib/commoda/queries";
-import { commodaService } from "@/lib/commoda/service";
+import { canPurchaseFromQuote, commodaService } from "@/lib/commoda/service";
 import { priceDigits } from "@/lib/commoda/markets";
 import { DROPS, DURATIONS } from "@/lib/commoda/terms";
 import { addDays, dateLabel, gen } from "@/lib/commoda/format";
@@ -70,6 +70,12 @@ function ProtectPage() {
     onSuccess: (p) => {
       setResult(p);
       queryClient.invalidateQueries({ queryKey: qk.pool });
+      if (wallet.address) {
+        queryClient.invalidateQueries({ queryKey: qk.protections(wallet.address) });
+        queryClient.invalidateQueries({ queryKey: qk.summary(wallet.address) });
+        queryClient.invalidateQueries({ queryKey: qk.attention(wallet.address) });
+        queryClient.invalidateQueries({ queryKey: qk.protection(p.id, wallet.address) });
+      }
       transaction.setOutcome("Your protection purchase was accepted.");
     },
     onError: (error) => { if (transaction.progress.stage !== "accepted") transaction.fail(error); },
@@ -227,7 +233,7 @@ function ProtectPage() {
                     variant="accent"
                     size="lg"
                     className="w-full"
-                    disabled={!market || quoteError || (Boolean(wallet.address) && (quotePending || !terms))}
+                    disabled={!market || quoteError || (Boolean(wallet.address) && !wallet.wrongNetwork && (quotePending || !terms || !canPurchaseFromQuote(quote)))}
                     onClick={() => {
                       if (!wallet.address) { void wallet.connect(); return; }
                       if (wallet.wrongNetwork) { wallet.switchToBradbury(); return; }
@@ -247,6 +253,11 @@ function ProtectPage() {
                     </div>
                   ) : quotePending ? (
                     <p className="mt-3 text-xs text-slate">Loading protection terms…</p>
+                  ) : quote && !canPurchaseFromQuote(quote) ? (
+                    <div className="mt-4 rounded-md border border-amber/30 bg-amber/10 px-3 py-3 text-sm text-slate">
+                      <p className="font-medium text-navy-deep">Protection temporarily unavailable.</p>
+                      <p className="mt-1">The pool does not currently have enough unreserved liquidity for this protection.</p>
+                    </div>
                   ) : null}
                   <p className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-slate">
                     <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />

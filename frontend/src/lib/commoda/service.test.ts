@@ -1,6 +1,6 @@
 // @ts-nocheck — executed by Bun's test runner, not the frontend TypeScript build.
 import { describe, expect, test } from "bun:test";
-import { canCancelProtection, getCancellationAction, getProtectionStatusLabel, resolveLatestOwnerProtectionId } from "./service";
+import { canCancelProtection, canPurchaseFromQuote, getCancellationAction, getProtectionStatusLabel, resolveLatestOwnerProtectionId } from "./service";
 import { MARKETS } from "./markets";
 
 describe("owner-index purchase ID resolution", () => {
@@ -24,5 +24,13 @@ describe("terminal resolution UI mappings", () => {
     expect(MARKETS.BRENT.gateSymbol).toBe("BZ_USDT");
     expect(MARKETS.NATGAS.binanceSymbol).toBe("NATGASUSDT");
     expect(MARKETS.NATGAS.gateSymbol).toBe("NG_USDT");
+  });
+});
+
+describe("purchase liquidity UI mapping", () => {
+  test("does not enable purchase when the contract quote reports insufficient liquidity", () => {
+    expect(canPurchaseFromQuote({ enoughLiquidity: false })).toBe(false);
+    expect(canPurchaseFromQuote({ enoughLiquidity: true })).toBe(true);
+    expect(canPurchaseFromQuote(null)).toBe(false);
   });
 });
