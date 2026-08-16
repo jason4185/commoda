@@ -170,7 +170,7 @@ function Index() {
               title={
                 <>
                   Built on market data.{" "}
-                  <span className="font-display italic">Checked automatically.</span>
+              <span className="font-display italic">Checked from verified sources.</span>
                 </>
               }
             />

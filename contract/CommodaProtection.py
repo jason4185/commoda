@@ -12,7 +12,8 @@ PURCHASE_EQ_BPS = 5
 MAX_OPERATORS = 5
 MAX_ATTENTION_PAGE = 50
 MAX_SOURCE_BYTES = 200000
-ACTIVE, CLAIMABLE, EXPIRED, CLAIMED = "ACTIVE", "CLAIMABLE", "EXPIRED", "CLAIMED"
+TERMINAL_GRACE_DAYS = 3
+ACTIVE, CLAIMABLE, EXPIRED, CLAIMED, CANCELLED = "ACTIVE", "CLAIMABLE", "EXPIRED", "CLAIMED", "CANCELLED"
 UNPROCESSED, BREACHED, NOT_BREACHED, INCONCLUSIVE = "UNPROCESSED", "BREACHED", "NOT_BREACHED", "INCONCLUSIVE"
 MARKETS = ("WTI", "BRENT", "NATGAS")
 BS = {"WTI": "CLUSDT", "BRENT": "BZUSDT", "NATGAS": "NATGASUSDT"}
@@ -74,6 +75,8 @@ class UserStats:
     premiums: u256
     claimable_payout: u256
     payouts: u256
+    cancelled: u256
+    premiums_refunded: u256
 
 def _err(kind: str, msg: str) -> NoReturn:
     raise gl.vm.UserError(kind + " " + msg)
@@ -251,6 +254,8 @@ class CommodaProtection(gl.Contract):
     operator_index: TreeMap[str, Address]
     operator_positions: TreeMap[str, u256]
     operator_count: u256
+    cancelled_count: u256
+    premiums_refunded: u256
 
     def __init__(self):
         self.owner = gl.message.sender_address
@@ -265,6 +270,8 @@ class CommodaProtection(gl.Contract):
         self.premiums_collected = u256(0)
         self.payouts_paid = u256(0)
         self.operator_count = u256(0)
+        self.cancelled_count = u256(0)
+        self.premiums_refunded = u256(0)
 
     def _invariant(self):
         if self.reserved_liability > self.pool_balance:
@@ -306,6 +313,8 @@ class CommodaProtection(gl.Contract):
             self.expired_count -= 1
         elif old == CLAIMED:
             self.claimed_count -= 1
+        elif old == CANCELLED:
+            self.cancelled_count -= 1
         if new == ACTIVE:
             self.active_count += 1
         elif new == CLAIMABLE:
@@ -314,6 +323,8 @@ class CommodaProtection(gl.Contract):
             self.expired_count += 1
         elif new == CLAIMED:
             self.claimed_count += 1
+        elif new == CANCELLED:
+            self.cancelled_count += 1
         key, stats = _address_key(p.owner), self.user_stats[_address_key(p.owner)]
         if old == ACTIVE:
             stats.active -= 1
@@ -323,6 +334,8 @@ class CommodaProtection(gl.Contract):
             stats.expired -= 1
         elif old == CLAIMED:
             stats.claimed -= 1
+        elif old == CANCELLED:
+            stats.cancelled -= 1
         if new == ACTIVE:
             stats.active += 1
         elif new == CLAIMABLE:
@@ -331,9 +344,30 @@ class CommodaProtection(gl.Contract):
             stats.expired += 1
         elif new == CLAIMED:
             stats.claimed += 1
+        elif new == CANCELLED:
+            stats.cancelled += 1
         self.user_stats[key] = stats
 
+    def _day_status(self, p: Protection) -> str:
+        return self.days.get(_day_key(p.protection_id, p.next_date), DayResult(UNPROCESSED, 0, "")).status
+
+    def _cancellation_status(self, p: Protection, check_auth: bool) -> str:
+        if check_auth and not self._caller_can_settle(p):
+            return "UNAUTHORIZED"
+        if p.state != ACTIVE:
+            return "NOT_ACTIVE"
+        if self._day_status(p) in (BREACHED, NOT_BREACHED):
+            return "CONCLUSIVE"
+        today_number = _date_parts(_today())[3]
+        unresolved_number = _date_parts(p.next_date)[3]
+        if today_number < unresolved_number + 1 + TERMINAL_GRACE_DAYS:
+            return "GRACE_PERIOD"
+        return "READY"
+
     def _settle_evidence(self, market: str, date: str, refresh: bool) -> Settlement:
+        # Correction policy: settlement records are append-only. A conclusive
+        # protection-day result is immutable; only UNPROCESSED/INCONCLUSIVE
+        # protection days may consume a newer shared market/date version.
         base = market + "|" + date
         current = self.current_settlement.get(base, "")
         if current != "" and not refresh:
@@ -400,6 +434,8 @@ class CommodaProtection(gl.Contract):
             return "EXPIRED"
         if p.state == CLAIMED:
             return "PROTECTION_NOT_ACTIVE"
+        if p.state == CANCELLED:
+            return "PROTECTION_NOT_ACTIVE"
         if requested_date != "" and requested_date != p.next_date:
             return "SETTLEMENT_ORDER"
         if p.next_date >= _today():
@@ -444,6 +480,7 @@ class CommodaProtection(gl.Contract):
 
     def _card(self, p: Protection) -> dict:
         status = self._settlement_status(p, "", True)
+        cancellation_status = self._cancellation_status(p, True)
         remaining = p.duration - p.settled_days if p.state == ACTIVE and p.duration > p.settled_days else 0
         return {"protection_id": int(p.protection_id), "owner": p.owner.as_hex, "market": p.market,
                 "display_name": NAMES[p.market], "protection_type": "PRICE_DROP",
@@ -456,6 +493,7 @@ class CommodaProtection(gl.Contract):
                 "breach_date": p.breach_date, "last_result": p.last_result,
                 "claimable": p.state == CLAIMABLE,
                 "can_settle": status == "READY" or status == "INCONCLUSIVE_RETRY",
+                "can_cancel": cancellation_status == "READY",
                 "can_claim": self._claim_status(p) == "READY"}
 
     def _reference(self, market: str) -> dict:
@@ -548,7 +586,10 @@ class CommodaProtection(gl.Contract):
                 "available_liquidity": int(self.pool_balance - self.reserved_liability),
                 "protections": int(self.protection_count), "active": int(self.active_count),
                 "claimable": int(self.claimable_count), "expired": int(self.expired_count),
-                "claimed": int(self.claimed_count), "premiums": int(self.premiums_collected),
+                "claimed": int(self.claimed_count), "cancelled": int(self.cancelled_count),
+                "premiums": int(self.premiums_collected),
+                "premiums_refunded": int(self.premiums_refunded),
+                "net_retained_premiums": int(self.premiums_collected - self.premiums_refunded),
                 "payouts_paid": int(self.payouts_paid), "paused": self.paused}
 
     @gl.public.view
@@ -594,10 +635,11 @@ class CommodaProtection(gl.Contract):
     @gl.public.view
     def get_user_summary(self, owner_hex: str) -> dict:
         owner_key = _address_key(_address(owner_hex))
-        stats = self.user_stats.get(owner_key, UserStats(0, 0, 0, 0, 0, 0, 0))
+        stats = self.user_stats.get(owner_key, UserStats(0, 0, 0, 0, 0, 0, 0, 0, 0))
         return {"total": int(self.owner_counts.get(owner_key, 0)), "active": int(stats.active),
                 "claimable": int(stats.claimable), "expired": int(stats.expired),
-                "claimed": int(stats.claimed), "premiums": int(stats.premiums),
+                "claimed": int(stats.claimed), "cancelled": int(stats.cancelled),
+                "premiums": int(stats.premiums), "premiums_refunded": int(stats.premiums_refunded),
                 "claimable_payout": int(stats.claimable_payout), "payouts": int(stats.payouts)}
 
     @gl.public.view
@@ -607,7 +649,7 @@ class CommodaProtection(gl.Contract):
         if start < 0 or start > count or limit <= 0 or limit > MAX_ATTENTION_PAGE:
             _err("[EXPECTED]", "invalid attention pagination")
         end = min(count, start + limit)
-        ready, retry = 0, 0
+        ready, retry, cancellation_ready = 0, 0, 0
         for i in range(start, end):
             protection_id = self.owner_index.get(owner_key + "|" + str(i))
             if protection_id is None:
@@ -618,16 +660,21 @@ class CommodaProtection(gl.Contract):
                 ready += 1
             elif status == "INCONCLUSIVE_RETRY":
                 retry += 1
-        stats = self.user_stats.get(owner_key, UserStats(0, 0, 0, 0, 0, 0, 0))
+            if self._cancellation_status(p, False) == "READY":
+                cancellation_ready += 1
+        stats = self.user_stats.get(owner_key, UserStats(0, 0, 0, 0, 0, 0, 0, 0, 0))
         has_more = end < count
         return {"start": start, "limit": limit, "total_owner_protections": count,
                 "scanned": end - start, "next_start": end if has_more else -1,
                 "has_more": has_more, "ready_to_settle": ready,
                 "inconclusive_retry": retry,
+                "cancellation_ready": cancellation_ready,
                 "ready_to_settle_scope": "page",
                 "inconclusive_retry_scope": "page",
+                "cancellation_ready_scope": "page",
                 "lifecycle_totals_scope": "global_user_stats",
-                "claimable": int(stats.claimable), "active": int(stats.active), "expired": int(stats.expired)}
+                "claimable": int(stats.claimable), "active": int(stats.active),
+                "expired": int(stats.expired), "cancelled": int(stats.cancelled)}
 
     @gl.public.view
     def get_market_settlement(self, market: str, date: str) -> dict:
@@ -656,6 +703,17 @@ class CommodaProtection(gl.Contract):
         return {"protection_id": int(protection_id), "date": p.next_date, "status": reason,
                 "can_settle": reason == "READY" or reason == "INCONCLUSIVE_RETRY",
                 "retry_required": reason == "INCONCLUSIVE_RETRY", "protection_state": p.state}
+
+    @gl.public.view
+    def cancellation_readiness(self, protection_id: u256) -> dict:
+        p = self._protection(protection_id)
+        unresolved_number = _date_parts(p.next_date)[3]
+        eligible_date = _date(unresolved_number + 1 + TERMINAL_GRACE_DAYS)
+        status = self._cancellation_status(p, True)
+        return {"protection_id": int(protection_id), "protection_state": p.state,
+                "unresolved_date": p.next_date, "day_status": self._day_status(p),
+                "terminal_grace_days": TERMINAL_GRACE_DAYS, "eligible_date": eligible_date,
+                "status": status, "can_cancel": status == "READY"}
 
     @gl.public.view
     def claim_readiness(self, protection_id: u256) -> dict:
@@ -736,7 +794,7 @@ class CommodaProtection(gl.Contract):
         self.owner_index[owner + "|" + str(index)] = pid
         self.owner_counts[owner] = index + 1
         if index == 0:
-            self.user_stats[owner] = UserStats(0, 0, 0, 0, 0, 0, 0)
+            self.user_stats[owner] = UserStats(0, 0, 0, 0, 0, 0, 0, 0, 0)
         self.days[_day_key(pid, p.next_date)] = DayResult(UNPROCESSED, 0, now)
         self.protection_count += 1
         self.pool_balance += premium
@@ -759,6 +817,9 @@ class CommodaProtection(gl.Contract):
             _err("[EXPECTED]", "settlement day incomplete")
         day_key = _day_key(protection_id, p.next_date)
         prior = self.days.get(day_key, DayResult(UNPROCESSED, 0, ""))
+        # A BREACHED/NOT_BREACHED day is final for this protection. Only an
+        # UNPROCESSED or INCONCLUSIVE day may refresh shared evidence, and a
+        # later version never reopens or rewrites a conclusive day result.
         evidence = self._settle_evidence(p.market, p.next_date, prior.status == INCONCLUSIVE)
         b = evidence.binance_close <= p.trigger_price
         g = evidence.gate_close <= p.trigger_price
@@ -786,9 +847,47 @@ class CommodaProtection(gl.Contract):
                 self._invariant()
             else:
                 p.next_date = _date(_date_parts(p.next_date)[3] + 1)
-                self.days[_day_key(protection_id, p.next_date)] = DayResult(UNPROCESSED, evidence.version, _now())
+                self.days[_day_key(protection_id, p.next_date)] = DayResult(UNPROCESSED, 0, _now())
         self.protections[protection_id] = p
         return p.state
+
+    @gl.public.write
+    def cancel_unresolved_protection(self, protection_id: u256) -> None:
+        p = self._protection(protection_id)
+        self._authorized(p)
+        if p.state != ACTIVE:
+            _err("[EXPECTED]", "protection not active")
+
+        day_status = self._day_status(p)
+        if day_status not in (UNPROCESSED, INCONCLUSIVE):
+            _err("[EXPECTED]", "settlement day conclusive")
+
+        unresolved_number = _date_parts(p.next_date)[3]
+        today_number = _date_parts(_today())[3]
+        if today_number <= unresolved_number:
+            _err("[EXPECTED]", "settlement day incomplete")
+        if today_number < unresolved_number + 1 + TERMINAL_GRACE_DAYS:
+            _err("[EXPECTED]", "terminal grace period active")
+
+        if p.payout > self.reserved_liability:
+            _err("[EXPECTED]", "insufficient reserved balance")
+        if p.premium > self.pool_balance:
+            _err("[EXPECTED]", "insufficient pool balance")
+        if p.payout < p.premium:
+            _err("[EXPECTED]", "invalid refund economics")
+
+        old = p.state
+        p.state = CANCELLED
+        self.reserved_liability -= p.payout
+        self.pool_balance -= p.premium
+        self.premiums_refunded += p.premium
+        self._state(p, old, p.state)
+        stats = self.user_stats[_address_key(p.owner)]
+        stats.premiums_refunded += p.premium
+        self.user_stats[_address_key(p.owner)] = stats
+        self.protections[protection_id] = p
+        self._invariant()
+        gl.get_contract_at(p.owner).emit_transfer(value=p.premium, on="finalized")
 
     @gl.public.write
     def claim_payout(self, protection_id: u256) -> None:

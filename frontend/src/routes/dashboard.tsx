@@ -9,6 +9,7 @@ import { StateBadge, ResultBadge } from "@/components/commoda/StateBadge";
 import { ProtectionDrawer } from "@/components/app/ProtectionDrawer";
 import { protectionsQuery, qk, summaryQuery, attentionQuery, protectionQuery } from "@/lib/commoda/queries";
 import {
+  canCancelProtection,
   canClaimProtection,
   commodaService,
   getSettlementAction,
@@ -50,21 +51,22 @@ function DashboardPage() {
   const [filter, setFilter] = useState<"ALL" | Protection["state"] | "READY_TO_SETTLE">("ALL");
   const [pendingAction, setPendingAction] = useState<{
     id: string;
-    kind: "settle" | "claim";
+    kind: "settle" | "cancel" | "claim";
   } | null>(null);
 
-  const invalidate = () => {
+  const invalidate = (id?: string) => {
     queryClient.invalidateQueries({ queryKey: qk.protections(owner) });
     queryClient.invalidateQueries({ queryKey: qk.summary(owner) });
     queryClient.invalidateQueries({ queryKey: qk.attention(owner) });
     queryClient.invalidateQueries({ queryKey: qk.pool });
+    if (id) queryClient.invalidateQueries({ queryKey: qk.protection(id, owner) });
   };
 
   const settle = useMutation({
     mutationFn: (id: string) => commodaService.settleNextDay(id, transaction.update),
     onMutate: (id) => { setPendingAction({ id, kind: "settle" }); const target = allProtections.find((item) => item.id === id); transaction.begin(target && getSettlementAction(target) === "RETRY" ? "Retrying settlement" : "Settling protection", "settle_protection"); },
     onSuccess: (p) => {
-      invalidate();
+      invalidate(p.id);
       const last = [...p.days].reverse().find((d) => d.result !== "UNPROCESSED");
       transaction.setOutcome(last ? ({ NOT_BREACHED: "No protected drop", BREACHED: "Protected price reached", INCONCLUSIVE: "Checking again required", UNPROCESSED: "Waiting" }[last.result]) : "Settlement accepted.");
     },
@@ -76,10 +78,21 @@ function DashboardPage() {
     mutationFn: (id: string) => commodaService.claim(id, transaction.update),
     onMutate: (id) => { setPendingAction({ id, kind: "claim" }); transaction.begin("Claiming payout", "claim_payout"); },
     onSuccess: (p) => {
-      invalidate();
+      invalidate(p.id);
       transaction.setOutcome(`Payout of ${gen(p.payout)} was accepted.`);
     },
     onError: (e: Error) => { if (transaction.progress.stage !== "accepted") transaction.fail(e); toast.error("Claim failed", { description: e.message }); },
+    onSettled: () => setPendingAction(null),
+  });
+
+  const cancel = useMutation({
+    mutationFn: (id: string) => commodaService.cancelUnresolved(id, transaction.update),
+    onMutate: (id) => { setPendingAction({ id, kind: "cancel" }); transaction.begin("Refunding protection", "cancel_unresolved_protection"); },
+    onSuccess: (p) => {
+      invalidate(p.id);
+      transaction.setOutcome(`Original premium of ${gen(p.premium)} was refunded.`);
+    },
+    onError: (e: Error) => { if (transaction.progress.stage !== "accepted") transaction.fail(e); toast.error("Cancellation failed", { description: e.message }); },
     onSettled: () => setPendingAction(null),
   });
 
@@ -97,12 +110,14 @@ function DashboardPage() {
     { label: "Ready to claim", value: String(userSummary?.claimable ?? allProtections.filter(canClaimProtection).length) },
     { label: "Ended", value: String(userSummary?.expired ?? allProtections.filter((p) => p.state === "EXPIRED").length) },
     { label: "Claimed", value: String(userSummary?.claimed ?? allProtections.filter((p) => p.state === "CLAIMED").length) },
+    { label: "Cancelled", value: String(userSummary?.cancelled ?? allProtections.filter((p) => p.state === "CANCELLED").length) },
     { label: "Premiums paid", value: userSummary ? gen(Number(userSummary.premiums) / 1e18) : gen(allProtections.reduce((a, p) => a + p.premium, 0)) },
+    { label: "Premiums refunded", value: userSummary ? gen(Number(userSummary.premiums_refunded) / 1e18) : gen(0) },
     { label: "Claimable payout", value: userSummary ? gen(Number(userSummary.claimable_payout) / 1e18) : gen(0) },
     { label: "Payouts received", value: userSummary ? gen(Number(userSummary.payouts) / 1e18) : gen(0) },
   ];
 
-  const attention = allProtections.filter((p) => getSettlementAction(p) !== "NONE" || canClaimProtection(p));
+  const attention = allProtections.filter((p) => getSettlementAction(p) !== "NONE" || canClaimProtection(p) || canCancelProtection(p));
 
   return (
     <div className="bg-porcelain">
@@ -169,8 +184,11 @@ function DashboardPage() {
                   <div className="mt-4 grid gap-3 md:grid-cols-3">
                     {attention.map((p) => {
                       const action = getSettlementAction(p);
+                      const cancellation = canCancelProtection(p);
                       const label = canClaimProtection(p)
                         ? "Payout ready"
+                        : cancellation
+                          ? "Resolution refund"
                         : action === "RETRY"
                           ? "Settlement retry"
                           : "Settlement ready";
@@ -178,7 +196,7 @@ function DashboardPage() {
                         <button key={p.id} onClick={() => setSelectedId(p.id)} className="border border-border p-4 text-left hover:border-navy/35">
                           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate">{label}</p>
                         <p className="mt-2 font-semibold text-navy-deep">{MARKETS[p.market].name}</p>
-                          <p className="mt-3 text-sm text-amber">{canClaimProtection(p) ? "Claim Payout" : action === "RETRY" ? "Retry Settlement" : "Settle Now"}</p>
+                          <p className="mt-3 text-sm text-amber">{canClaimProtection(p) ? "Claim Payout" : cancellation ? "Cancel & Refund" : action === "RETRY" ? "Retry Settlement" : "Settle Now"}</p>
                         </button>
                       );
                     })}
@@ -188,7 +206,7 @@ function DashboardPage() {
               <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-y border-border py-3">
                 <h2 className="text-xl font-semibold text-navy-deep">Your protections</h2>
                 <div className="flex flex-wrap gap-1">
-                  {(["ALL", "ACTIVE", "READY_TO_SETTLE", "CLAIMABLE", "EXPIRED", "CLAIMED"] as const).map((value) => <button key={value} onClick={() => setFilter(value)} className={`px-3 py-1.5 text-xs font-semibold transition-colors ${filter === value ? "bg-navy-deep text-porcelain" : "text-slate hover:bg-sand hover:text-ink"}`}>{value === "ALL" ? "All" : value === "ACTIVE" ? "Active" : value === "READY_TO_SETTLE" ? "Ready to settle" : value === "CLAIMABLE" ? "Ready to claim" : value === "EXPIRED" ? "Ended" : "Claimed"}</button>)}
+                  {(["ALL", "ACTIVE", "READY_TO_SETTLE", "CLAIMABLE", "EXPIRED", "CLAIMED", "CANCELLED"] as const).map((value) => <button key={value} onClick={() => setFilter(value)} className={`px-3 py-1.5 text-xs font-semibold transition-colors ${filter === value ? "bg-navy-deep text-porcelain" : "text-slate hover:bg-sand hover:text-ink"}`}>{value === "ALL" ? "All" : value === "ACTIVE" ? "Active" : value === "READY_TO_SETTLE" ? "Ready to settle" : value === "CLAIMABLE" ? "Ready to claim" : value === "EXPIRED" ? "Ended" : value === "CLAIMED" ? "Claimed" : "Cancelled"}</button>)}
                 </div>
               </div>
               <div className="space-y-3">
@@ -198,6 +216,7 @@ function DashboardPage() {
                   protection={p}
                   onOpen={() => setSelectedId(p.id)}
                   onSettle={() => settle.mutate(p.id)}
+                  onCancel={() => cancel.mutate(p.id)}
                   onClaim={() => claim.mutate(p.id)}
                   pendingAction={pendingAction}
                 />
@@ -217,6 +236,7 @@ function DashboardPage() {
         open={Boolean(selected)}
         onOpenChange={(v) => !v && setSelectedId(null)}
         onSettle={(id) => settle.mutate(id)}
+        onCancel={(id) => cancel.mutate(id)}
         onClaim={(id) => claim.mutate(id)}
         pendingAction={pendingAction}
       />
@@ -228,19 +248,21 @@ function ProtectionRow({
   protection: p,
   onOpen,
   onSettle,
+  onCancel,
   onClaim,
   pendingAction,
 }: {
   protection: Protection;
   onOpen: () => void;
   onSettle: () => void;
+  onCancel: () => void;
   onClaim: () => void;
-  pendingAction: { id: string; kind: "settle" | "claim" } | null;
+  pendingAction: { id: string; kind: "settle" | "cancel" | "claim" } | null;
 }) {
   const market = MARKETS[p.market];
   const digits = priceDigits(p.market);
   const settled = p.settledDays;
-  const nextDay = p.days.find((d) => d.result === "INCONCLUSIVE") ?? p.days.find((d) => d.result === "UNPROCESSED");
+  const nextDay = p.state === "ACTIVE" ? p.days.find((d) => d.result === "INCONCLUSIVE") ?? p.days.find((d) => d.result === "UNPROCESSED") : undefined;
   const action = getSettlementAction(p);
   const lastResult = [...p.days].reverse().find((d) => d.result !== "UNPROCESSED");
   const busy = pendingAction?.id === p.id;
@@ -278,8 +300,10 @@ function ProtectionRow({
             Details
           </Button>
           {action !== "NONE" ? <Button variant="outline" disabled={busy} onClick={onSettle}>{busy && pendingAction?.kind === "settle" ? <><Loader2 className="animate-spin" /> Checking…</> : action === "RETRY" ? "Retry Settlement" : "Settle Now"}</Button> : null}
+          {canCancelProtection(p) ? <Button variant="outline" disabled={busy} onClick={onCancel}>{busy && pendingAction?.kind === "cancel" ? <><Loader2 className="animate-spin" /> Refunding…</> : "Cancel & Refund"}</Button> : null}
           {canClaimProtection(p) ? <Button variant="accent" disabled={busy} onClick={onClaim}>{busy && pendingAction?.kind === "claim" ? <><Loader2 className="animate-spin" /> Claiming…</> : "Claim Payout"}</Button> : null}
           {p.state === "CLAIMED" ? <span className="self-center text-sm font-semibold text-success">Paid</span> : null}
+          {p.state === "CANCELLED" ? <span className="self-center text-sm font-semibold text-warning">Premium refunded</span> : null}
           {p.state === "ACTIVE" && action === "NONE" && nextDay ? <span className="self-center text-xs text-slate">Next check: {dateLabel(nextDay.date)}</span> : null}
         </div>
       </div>

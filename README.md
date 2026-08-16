@@ -12,9 +12,10 @@ Commoda v1 supports three curated markets: WTI Crude Oil, Brent Crude Oil, and N
 | --- | --- |
 | Network | GenLayer Bradbury Testnet |
 | Chain ID | `4221` |
-| Contract | [`0xf03891AB3223D471f677274976d1e35d53640A13`](https://explorer-bradbury.genlayer.com/address/0xf03891AB3223D471f677274976d1e35d53640A13) |
+| Contract | [`0x460bc57A6D226eEe437bdc9cb977c049e4750b5b`](https://explorer-bradbury.genlayer.com/address/0x460bc57A6D226eEe437bdc9cb977c049e4750b5b) |
 | Source | [`contract/CommodaProtection.py`](contract/CommodaProtection.py) |
-| Source SHA-256 | `7c9a393399585fe110d2ea03665c43110a9af3452f09d2728f72eb4d41cb48f3` |
+| Status | Deployed |
+| Audited production source SHA-256 | `d1e723cfba976a55f5e559af673c5557a4ae96b062585b7a72b1a6664dae9683` |
 
 ## Why Commoda
 
@@ -106,8 +107,10 @@ flowchart TD
     More -->|Yes| Check
     More -->|No| Expired[EXPIRED]
     Retry --> Check
+    Retry -->|After three complete retry days| Cancel[Cancel and refund premium]
     Claimable --> Claim[Owner claims fixed payout]
     Claim --> Claimed[CLAIMED]
+    Cancel --> Cancelled[CANCELLED]
 ```
 
 ## Supported markets and fixed terms
@@ -159,7 +162,7 @@ For each covered day, the contract records one of these results:
 | `NOT_BREACHED` | No protected drop | Both sources remain above the protected price. |
 | `INCONCLUSIVE` | Checking again | The sources disagree and the same day can be retried. |
 
-`INCONCLUSIVE` is not treated as a forced failure or success. The protection remains active, `next_date` does not advance, `settled_days` does not increase, reserves stay locked, and later days remain blocked.
+`INCONCLUSIVE` is not treated as a forced failure or success. The protection remains active, `next_date` does not advance, `settled_days` does not increase, reserves stay locked, and later days remain blocked. Settlement can be retried for three complete UTC days after the unresolved coverage date. If the earliest unresolved day is still `UNPROCESSED` or `INCONCLUSIVE` at the boundary, an authorized caller may terminally cancel the protection: the payout reserve is released, the original premium is refunded to the protection owner, and no payout is made. The caller cannot choose a different date.
 
 Protection states are shown to users as:
 
@@ -169,6 +172,7 @@ Protection states are shown to users as:
 | `CLAIMABLE` | Ready to claim |
 | `EXPIRED` | Ended |
 | `CLAIMED` | Paid |
+| `CANCELLED` | Cancelled |
 
 ## Data sources and verification
 
@@ -199,6 +203,7 @@ available_liquidity = pool_balance - reserved_liability
 | `INCONCLUSIVE` | Unchanged | Unchanged |
 | `BREACHED` | Unchanged | Remains locked until claim |
 | `EXPIRED` | Unchanged | `- payout` |
+| `CANCELLED` | `- premium` | `- payout` |
 | Claim | `- payout` | `- payout` |
 
 Purchases require enough available liquidity, including the incoming premium, to reserve the requested payout. The contract enforces this rule. The owner can withdraw only unreserved liquidity.
@@ -214,13 +219,14 @@ Purchases require enough available liquidity, including the incoming premium, to
 | Purchase protection | Any wallet, subject to terms and liquidity |
 | Settle personal protection | Protection owner |
 | Settle any protection | Contract owner or approved operator |
+| Cancel unresolved protection | Protection owner, contract owner, or approved operator |
 | Claim payout | Protection owner only |
 
 The owner may approve at most five settlement operators. Operators can trigger settlement but cannot choose the date, evidence, outcome, payout, or claimant.
 
-Settlement is caller-triggered. The contract does not submit a transaction when UTC time changes. A protection owner, operator, or optional keeper can trigger a due settlement. If nobody calls, the state remains safe but progression is delayed. This is an operational liveness consideration, not a settlement-ordering or authorization bypass.
+Settlement is caller-triggered. The contract does not submit a transaction when UTC time changes. A protection owner, operator, or optional keeper can trigger a due settlement. If nobody calls, the state remains safe but progression is delayed. Once the earliest unresolved coverage date has had three complete UTC retry days, the same authorized callers can request terminal cancellation. Cancellation uses the internally stored earliest date, releases the payout reserve, refunds the original premium, and never skips to a later date. This is an operational liveness boundary, not a settlement-ordering or authorization bypass.
 
-Pausing blocks new purchases only. Existing protections can still settle, retry inconclusive days, and claim payouts.
+Pausing blocks new purchases only. Existing protections can still settle, retry inconclusive days, claim payouts, and use an eligible terminal cancellation.
 
 ## Frontend and wallet architecture
 
@@ -269,7 +275,9 @@ The contract and direct test suites cover:
 - exact premium enforcement;
 - reserved funds protected from withdrawal;
 - independent Binance and Gate settlement evidence;
-- source failure preserving contract state; and
+- source failure preserving contract state;
+- bounded cancellation for unresolved source failures or disagreement;
+- conclusive protection-day results remaining immutable when newer evidence versions are created; and
 - no user-submitted market-price evidence.
 
 ## Repository structure
@@ -311,17 +319,21 @@ genvm-lint schema contract/CommodaProtection.py
 genvm-lint typecheck contract/CommodaProtection.py
 ```
 
+Historical settlement evidence is fail-closed. Binance/Gate disagreement remains `INCONCLUSIVE`, and unavailable or malformed source data does not fabricate a result. Only unresolved `UNPROCESSED` or `INCONCLUSIVE` protection days may consume newer versioned evidence; once a protection day is conclusively `BREACHED` or `NOT_BREACHED`, its result is not reopened or rewritten. After the bounded three-day retry window, the earliest unresolved day may be terminally cancelled, releasing its payout reserve and refunding the original premium without making a payout.
+
+The terminal policy refunds the full original premium, without prorating for earlier days that may already have been conclusively checked.
+
 Previously recorded validation results:
 
 | Check | Result |
 | --- | --- |
-| Production-focused direct suite | 83 passed, 0 failed |
+| Production-focused direct suite | 95 passed, 0 failed |
 | Frontend `bun x tsc --noEmit` | PASS |
 | Frontend `bun run build` | PASS |
 | GenVM lint and validation | PASS |
 | Contract typecheck | PASS |
 | Python compile/compileall | PASS |
-| Production schema | 34 methods: 25 views, 9 writes |
+| Production schema | 36 methods: 26 views, 10 writes |
 
 ## Operational considerations
 

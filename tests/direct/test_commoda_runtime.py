@@ -133,7 +133,10 @@ def test_runtime_initialization_and_zero_state(direct_vm, direct_deploy, direct_
         "claimable": 0,
         "expired": 0,
         "claimed": 0,
+        "cancelled": 0,
         "premiums": 0,
+        "premiums_refunded": 0,
+        "net_retained_premiums": 0,
         "payouts_paid": 0,
         "paused": False,
     }
@@ -282,6 +285,7 @@ def test_same_day_settlement_is_blocked_at_each_utc_boundary(direct_vm, direct_d
     _mock_settlement(direct_vm, "2026-08-13", "100", "100")
     assert contract.settle_protection(0) == "ACTIVE"
     assert contract.get_protection(0)["next_date"] == "2026-08-14"
+    assert contract.get_protection_day_result(0, "2026-08-14")["evidence_version"] == 0
 
 
 def test_sender_sensitive_readiness_views_match_authorization(direct_vm, direct_deploy, direct_owner, direct_alice, direct_bob, direct_charlie):
@@ -515,6 +519,7 @@ def test_every_public_view_is_runtime_abi_encodable(direct_vm, direct_deploy, di
         contract.get_market_settlement("WTI", "2026-08-02"),
         contract.get_market_settlement_version("WTI", "2026-08-02", 1),
         contract.settlement_readiness(0),
+        contract.cancellation_readiness(0),
         contract.claim_readiness(0),
         contract.get_protection_day_result(0, "2026-08-02"),
         contract.get_protection_history(0, 0, 30),

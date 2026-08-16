@@ -8,6 +8,7 @@ const stateStyles: Record<ProtectionState, string> = {
   CLAIMABLE: "border-success/30 bg-success/10 text-success",
   EXPIRED: "border-border bg-muted text-slate",
   CLAIMED: "border-amber/40 bg-amber/15 text-[oklch(0.45_0.11_74)]",
+  CANCELLED: "border-warning/35 bg-warning/12 text-warning",
 };
 
 const stateLabels: Record<ProtectionState, string> = {
@@ -15,6 +16,7 @@ const stateLabels: Record<ProtectionState, string> = {
   CLAIMABLE: "Ready to claim",
   EXPIRED: "Ended",
   CLAIMED: "Paid",
+  CANCELLED: "Cancelled",
 };
 
 export function StateBadge({ state }: { state: ProtectionState }) {

@@ -3,7 +3,9 @@ export type MarketId = "WTI" | "BRENT" | "NATGAS";
 export type DropPct = 1 | 2 | 3;
 export type DurationDays = 7 | 14 | 30;
 
-export type ProtectionState = "ACTIVE" | "CLAIMABLE" | "EXPIRED" | "CLAIMED";
+export type ProtectionState = "ACTIVE" | "CLAIMABLE" | "EXPIRED" | "CLAIMED" | "CANCELLED";
+
+export type CancellationStatus = "UNAUTHORIZED" | "NOT_ACTIVE" | "CONCLUSIVE" | "GRACE_PERIOD" | "READY";
 
 export type DayResult = "UNPROCESSED" | "BREACHED" | "NOT_BREACHED" | "INCONCLUSIVE";
 
@@ -57,12 +59,19 @@ export interface Protection {
   canSettle?: boolean;
   retryRequired?: boolean;
   canClaim?: boolean;
+  canCancel?: boolean;
+  cancellationStatus?: CancellationStatus;
+  cancellationEligibleDate?: string;
 }
 
 export interface PoolStats {
   poolBalance: number;
   reservedLiability: number;
   activeProtections: number;
+  cancelledProtections: number;
+  premiumsCollected: number;
+  premiumsRefunded: number;
+  netRetainedPremiums: number;
   payoutsPaid: number;
   protectionsIssued: number;
   utilisationPct: number;

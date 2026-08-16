@@ -55,7 +55,18 @@ means `NOT_BREACHED`, and disagreement means `INCONCLUSIVE`.
 Evidence retries create a new version instead of overwriting the old record.
 Each protection stores its own per-date result. `UNPROCESSED` and
 `INCONCLUSIVE` remain unresolved; the contract always settles the earliest
-unresolved date, so cached later evidence cannot skip an earlier day.
+unresolved date, so cached later evidence cannot skip an earlier day. A
+conclusive `BREACHED` or `NOT_BREACHED` result is immutable for that
+protection/day. Only unresolved or `INCONCLUSIVE` days may consume newer
+evidence versions; later versions never reopen a conclusive result.
+
+If the earliest unresolved coverage date remains `UNPROCESSED` or
+`INCONCLUSIVE` through three complete UTC retry days, an authorized caller may
+cancel the protection using the internally stored date. Cancellation marks the
+protection `CANCELLED`, releases the reserved payout, refunds the original
+premium to the protection owner, and makes no payout. It does not fabricate
+evidence or skip to a later date. The refund is the full original premium;
+there is no prorating for earlier conclusively checked days.
 
 ## Reserves, lifecycle, and authorization
 
@@ -63,13 +74,13 @@ The owner funds the pool. At purchase, the exact premium is collected and the
 full fixed payout is reserved. Available liquidity is
 `pool_balance - reserved_liability`; owner withdrawal is limited to that
 amount. An invariant check enforces `reserved_liability <= pool_balance` at
-funding, purchase, withdrawal, expiry, and claim.
+funding, purchase, withdrawal, expiry, cancellation, and claim.
 
 Conclusive breach makes a protection `CLAIMABLE` and records the breach date.
 Conclusive non-breach advances the next date; completion makes it `EXPIRED`
 and releases the reserve. `INCONCLUSIVE` does neither. Only the protection
 owner claims; claim reduces pool and reserve exactly once. Pausing blocks new
-purchases but not settlement or claims.
+purchases but not settlement, claims, or an eligible terminal cancellation.
 
 Settlement is authorized for the protection owner, contract owner, or an
 approved operator. Operators are owner-managed and capped at 5. Owner

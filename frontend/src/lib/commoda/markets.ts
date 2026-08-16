@@ -16,8 +16,8 @@ export const MARKETS: Record<MarketId, Market> = {
     unit: "per barrel",
     description:
       "West Texas Intermediate is the North American crude benchmark. Refiners, producers and logistics operators carry direct exposure to sharp WTI drawdowns.",
-    binanceSymbol: "WTIUSDT",
-    gateSymbol: "WTI_USDT",
+    binanceSymbol: "CLUSDT",
+    gateSymbol: "CL_USDT",
     referencePrice: null,
     change24hPct: null,
     available: true,
@@ -29,8 +29,8 @@ export const MARKETS: Record<MarketId, Market> = {
     unit: "per barrel",
     description:
       "Brent is the global seaborne crude benchmark used across European, African and Asian pricing. It anchors most international physical contracts.",
-    binanceSymbol: "BRENTUSDT",
-    gateSymbol: "BRENT_USDT",
+    binanceSymbol: "BZUSDT",
+    gateSymbol: "BZ_USDT",
     referencePrice: null,
     change24hPct: null,
     available: true,
@@ -42,7 +42,7 @@ export const MARKETS: Record<MarketId, Market> = {
     unit: "per MMBtu",
     description:
       "Henry Hub natural gas is among the most volatile energy benchmarks, with weather-driven drawdowns that move faster than most hedging cycles.",
-    binanceSymbol: "NGUSDT",
+    binanceSymbol: "NATGASUSDT",
     gateSymbol: "NG_USDT",
     referencePrice: null,
     change24hPct: null,

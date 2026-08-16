@@ -180,7 +180,9 @@ def test_protection_specific_results_and_ordering():
     assert "prior.status == INCONCLUSIVE" in TEXT
     assert "self.days[_day_key(protection_id, p.next_date)]" in TEXT
     assert "settlement_readiness(self, protection_id" in TEXT
+    assert "cancellation_readiness(self, protection_id" in TEXT
     assert "p.state == CLAIMED" in TEXT
+    assert "p.state == CANCELLED" in TEXT
     assert 'return "PROTECTION_NOT_ACTIVE"' in TEXT
 
 
@@ -194,6 +196,31 @@ def test_inconclusive_blocks_progress_and_retries_versioned_evidence():
     assert "prior.status == INCONCLUSIVE" in settlement
     assert 'self.current_settlement.get(base, "")' in TEXT
     assert "old version" not in TEXT
+
+
+def test_terminal_resolution_policy_is_date_based_and_id_only():
+    assert "TERMINAL_GRACE_DAYS = 3" in TEXT
+    assert "today_number < unresolved_number + 1 + TERMINAL_GRACE_DAYS" in TEXT
+    assert 'def cancel_unresolved_protection(self, protection_id: u256) -> None:' in TEXT
+    assert 'def cancellation_readiness(self, protection_id: u256) -> dict:' in TEXT
+    cancellation = TEXT.split("def cancel_unresolved_protection", 1)[1].split("def claim_payout", 1)[0]
+    assert "p.next_date" in cancellation
+    assert "date:" not in cancellation
+    assert "version" not in cancellation
+    assert "_historical" not in cancellation
+    assert "p.state != ACTIVE" in cancellation
+    assert "day_status not in (UNPROCESSED, INCONCLUSIVE)" in cancellation
+
+
+def test_historical_correction_policy_is_explicit_and_fail_closed():
+    assert "settlement records are append-only" in TEXT
+    assert "protection-day result is immutable" in TEXT
+    assert "only UNPROCESSED/INCONCLUSIVE" in TEXT
+    assert "later version never reopens or rewrites" in TEXT
+    cancellation = TEXT.split("def cancel_unresolved_protection", 1)[1].split("def claim_payout", 1)[0]
+    assert "p.next_date" in cancellation
+    assert "self._day_status(p)" in cancellation
+    assert "gl.nondet" not in cancellation
 
 
 def test_shared_evidence_is_trigger_neutral():
@@ -220,7 +247,12 @@ def test_reserve_invariant_and_lifecycle():
     assert "p.state = CLAIMABLE" in TEXT
     assert "p.state = EXPIRED" in TEXT
     assert "p.state = CLAIMED" in TEXT
+    assert "p.state = CANCELLED" in TEXT
+    assert "self.reserved_liability -= p.payout" in TEXT
+    assert "self.pool_balance -= p.premium" in TEXT
+    assert "self.premiums_refunded += p.premium" in TEXT
     assert "emit_transfer(value=p.payout, on=\"finalized\")" in TEXT
+    assert "emit_transfer(value=p.premium, on=\"finalized\")" in TEXT
 
 
 def test_protocol_lifecycle_counters_use_declared_fields_explicitly():
@@ -228,10 +260,10 @@ def test_protocol_lifecycle_counters_use_declared_fields_explicitly():
     assert "def _count" not in TEXT
     assert "setattr(" not in state
     assert "getattr(" not in state
-    for field in ("active_count", "claimable_count", "expired_count", "claimed_count"):
+    for field in ("active_count", "claimable_count", "expired_count", "claimed_count", "cancelled_count"):
         assert f"self.{field} += 1" in state
         assert f"self.{field} -= 1" in state
-    for field in ("active", "claimable", "expired", "claimed"):
+    for field in ("active", "claimable", "expired", "claimed", "cancelled"):
         assert f"stats.{field} += 1" in state
         assert f"stats.{field} -= 1" in state
 
@@ -273,11 +305,13 @@ def test_constructor_and_storage_types_are_declared():
     assert "self.claimable_count = u256(0)" in TEXT
     assert "self.expired_count = u256(0)" in TEXT
     assert "self.claimed_count = u256(0)" in TEXT
+    assert "self.cancelled_count = u256(0)" in TEXT
+    assert "self.premiums_refunded = u256(0)" in TEXT
     assert "protections: TreeMap[u256, Protection]" in TEXT
     assert "days: TreeMap[str, DayResult]" in TEXT
     assert "settlements: TreeMap[str, Settlement]" in TEXT
     assert "owner_index: TreeMap[str, u256]" in TEXT
-    assert "UserStats(0, 0, 0, 0, 0, 0, 0)" in TEXT
+    assert "UserStats(0, 0, 0, 0, 0, 0, 0, 0, 0)" in TEXT
     assert "del self.operator_index[str(last)]" in TEXT
 
 
@@ -442,10 +476,13 @@ def test_owner_read_models_are_owner_index_only_and_bounded():
 def test_caller_specific_read_fields_follow_write_permissions():
     card = TEXT.split("def _card", 1)[1].split("def _reference", 1)[0]
     assert '"can_settle":' in card
+    assert '"can_cancel":' in card
     assert "status == \"READY\" or status == \"INCONCLUSIVE_RETRY\"" in card
     assert 'self._claim_status(p) == "READY"' in card
     readiness = TEXT.split("def settlement_readiness", 1)[1].split("def claim_readiness", 1)[0]
     assert "self._settlement_status(p, requested_date, True)" in readiness
+    cancellation = TEXT.split("def cancellation_readiness", 1)[1].split("def claim_readiness", 1)[0]
+    assert "self._cancellation_status(p, True)" in cancellation
 
 
 def test_operator_five_entry_boundary_and_compaction_model():
@@ -545,6 +582,7 @@ def test_attention_and_readiness_models():
     assert '"has_more": has_more' in attention
     assert '"ready_to_settle_scope": "page"' in attention
     assert '"inconclusive_retry_scope": "page"' in attention
+    assert '"cancellation_ready_scope": "page"' in attention
     assert '"lifecycle_totals_scope": "global_user_stats"' in attention
     assert "range(count)" not in attention
     assert "ready_to_settle" in attention
@@ -627,7 +665,7 @@ def test_efficient_owner_index_and_dashboard_stats():
     assert "owner_counts: TreeMap" in TEXT
     assert 'owner + "|" + str(index)' in TEXT
     assert "def get_user_summary" in TEXT
-    for field in ("active", "claimable", "expired", "claimed", "premiums", "claimable_payout", "payouts"):
+    for field in ("active", "claimable", "expired", "claimed", "cancelled", "premiums", "premiums_refunded", "claimable_payout", "payouts"):
         assert field in TEXT
     assert "limit <= 0" in TEXT
     assert "limit > 50" in TEXT
@@ -662,7 +700,7 @@ def test_missing_protection_entries_use_deterministic_expected_error():
     helper = TEXT.split("def _protection", 1)[1].split("def _market", 1)[0]
     assert 'self.protections.get(protection_id)' in helper
     assert '_err("[EXPECTED]", "protection not found")' in helper
-    for method in ("get_protection", "get_protection_card", "settlement_readiness",
+    for method in ("get_protection", "get_protection_card", "settlement_readiness", "cancellation_readiness",
                    "claim_readiness", "get_protection_day_result",
                    "get_protection_history", "settle_protection", "claim_payout"):
         section = TEXT.split("def " + method, 1)[1].split("@gl.public", 1)[0]
@@ -683,9 +721,9 @@ def test_global_numeric_protection_id_architecture():
 
 
 def test_all_protection_id_public_abis_are_numeric():
-    for method in ("get_protection", "get_protection_card", "settlement_readiness",
+    for method in ("get_protection", "get_protection_card", "settlement_readiness", "cancellation_readiness",
                    "claim_readiness", "get_protection_day_result", "get_protection_history",
-                   "settle_protection", "claim_payout"):
+                   "settle_protection", "cancel_unresolved_protection", "claim_payout"):
         section = TEXT.split("def " + method, 1)[1].split("@gl.public", 1)[0]
         assert "protection_id: u256" in section
 
@@ -728,3 +766,4 @@ def test_transfers_use_finalized_genlayer_recipient_pattern():
     assert "gl.transfer(" not in TEXT
     assert 'gl.get_contract_at(self.owner).emit_transfer(value=u256(amount_native), on="finalized")' in TEXT
     assert 'gl.get_contract_at(p.owner).emit_transfer(value=p.payout, on="finalized")' in TEXT
+    assert 'gl.get_contract_at(p.owner).emit_transfer(value=p.premium, on="finalized")' in TEXT

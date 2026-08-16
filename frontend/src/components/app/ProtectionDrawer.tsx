@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ResultBadge, StateBadge } from "@/components/commoda/StateBadge";
 import { MARKETS, priceDigits } from "@/lib/commoda/markets";
 import { dateLabel, gen, shortDate, usd } from "@/lib/commoda/format";
-import { canClaimProtection, getDayResultLabel, getSettlementAction } from "@/lib/commoda/service";
+import { canCancelProtection, canClaimProtection, getDayResultLabel, getSettlementAction } from "@/lib/commoda/service";
 import { settlementEvidenceQuery } from "@/lib/commoda/queries";
 import type { Protection } from "@/lib/commoda/types";
 
@@ -21,8 +21,9 @@ interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onSettle: (id: string) => void;
+  onCancel: (id: string) => void;
   onClaim: (id: string) => void;
-  pendingAction: { id: string; kind: "settle" | "claim" } | null;
+  pendingAction: { id: string; kind: "settle" | "cancel" | "claim" } | null;
 }
 
 export function ProtectionDrawer({
@@ -30,6 +31,7 @@ export function ProtectionDrawer({
   open,
   onOpenChange,
   onSettle,
+  onCancel,
   onClaim,
   pendingAction,
 }: Props) {
@@ -38,6 +40,7 @@ export function ProtectionDrawer({
   const digits = priceDigits(protection.market);
   const settledDays = protection.settledDays;
   const settlementAction = getSettlementAction(protection);
+  const canCancel = canCancelProtection(protection);
   const canClaim = canClaimProtection(protection);
   const busy = pendingAction?.id === protection.id;
 
@@ -66,6 +69,7 @@ export function ProtectionDrawer({
 
           <div className="flex flex-wrap gap-3">
             {settlementAction !== "NONE" ? <Button variant="outline" disabled={busy} onClick={() => onSettle(protection.id)}>{busy && pendingAction?.kind === "settle" ? <><Loader2 className="animate-spin" /> Checking…</> : settlementAction === "RETRY" ? "Retry Settlement" : "Settle Now"}</Button> : null}
+            {canCancel ? <Button variant="outline" disabled={busy} onClick={() => onCancel(protection.id)}>{busy && pendingAction?.kind === "cancel" ? <><Loader2 className="animate-spin" /> Refunding…</> : "Cancel & Refund"}</Button> : null}
             {canClaim ? <Button variant="accent" disabled={busy} onClick={() => onClaim(protection.id)}>
               {busy && pendingAction?.kind === "claim" ? (
                 <>
@@ -76,7 +80,11 @@ export function ProtectionDrawer({
               )}
             </Button> : null}
             {protection.state === "CLAIMED" ? <span className="self-center text-sm font-semibold text-success">Paid</span> : null}
+            {protection.state === "CANCELLED" ? <span className="self-center text-sm font-semibold text-warning">Premium refunded</span> : null}
           </div>
+
+          {canCancel ? <p className="border border-warning/25 bg-warning/8 px-4 py-3 text-sm leading-relaxed text-slate">Market data could not be conclusively verified within the allowed resolution period. You can cancel this protection and receive the original premium back; no payout will be made.</p> : null}
+          {protection.state === "CANCELLED" ? <p className="border border-warning/25 bg-warning/8 px-4 py-3 text-sm leading-relaxed text-slate">Market data could not be conclusively verified within the allowed resolution period. The original premium was refunded; no payout was made.</p> : null}
 
           <div>
             <h3 className="text-sm font-semibold text-navy-deep">Daily settlement timeline</h3>

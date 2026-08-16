@@ -36,6 +36,10 @@ function TransparencyPage() {
         { label: "Pool balance", value: gen(pool.poolBalance) },
         { label: "Reserved for payouts", value: gen(pool.reservedLiability) },
         { label: "Active protections", value: pool.activeProtections.toLocaleString() },
+        { label: "Cancelled protections", value: pool.cancelledProtections.toLocaleString() },
+        { label: "Premiums collected (gross)", value: gen(pool.premiumsCollected) },
+        { label: "Premiums refunded", value: gen(pool.premiumsRefunded) },
+        { label: "Net premiums retained", value: gen(pool.netRetainedPremiums) },
         { label: "Payouts paid", value: gen(pool.payoutsPaid) },
       ]
     : [];
@@ -58,7 +62,7 @@ function TransparencyPage() {
 
       <Section>
         <SectionHeading eyebrow="Pool" title="Protection pool" />
-        <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {isPending || !pool
             ? [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-28 rounded-xl" />)
             : stats.map((s) => (
@@ -72,7 +76,7 @@ function TransparencyPage() {
         </div>
         {pool ? (
           <p className="mt-5 text-sm text-slate">
-            <span className="font-semibold text-ink">{pool.utilisationPct.toFixed(2)}%</span> of the pool is currently reserved for active protections.
+            <span className="font-semibold text-ink">{pool.utilisationPct.toFixed(2)}%</span> of the pool is currently reserved for outstanding protection liabilities.
           </p>
         ) : null}
       </Section>
@@ -93,11 +97,11 @@ function TransparencyPage() {
                 },
                 {
                   t: "Pool & liability accounting",
-                  d: "Tracks premiums received, payout liability reserved against open protections and payouts released on claim.",
+                  d: "Tracks gross premiums received, refunded premiums, payout liability reserved against open protections and payouts released on claim.",
                 },
                 {
                   t: "Claim handler",
-                  d: "Releases the fixed payout once a protection reaches the claimable state. Payout size is fixed at purchase.",
+                  d: "Releases the fixed payout once a protection reaches the claimable state, or refunds the original premium when unresolved data reaches the terminal boundary. Payout size is fixed at purchase.",
                 },
               ].map((i) => (
                 <li key={i.t} className="rounded-xl border border-border bg-card p-5">
@@ -141,7 +145,7 @@ function TransparencyPage() {
             <div className="mt-8 rounded-xl border border-navy/15 bg-navy/5 p-6">
               <h3 className="text-sm font-semibold text-navy-deep">How a day is settled</h3>
               <p className="mt-2 text-sm leading-relaxed text-slate">
-                A covered day is marked <strong className="text-danger">Protected price reached</strong> only when both daily closing prices are at or below your protected price. If both are above it, the day is marked <strong className="text-success">No protected drop</strong>. If the sources disagree or one is unavailable, the day stays open and is checked again.
+                A covered day is marked <strong className="text-danger">Protected price reached</strong> only when both daily closing prices are at or below your protected price. If both are above it, the day is marked <strong className="text-success">No protected drop</strong>. If the sources disagree or one is unavailable, the day stays open and is checked again. If the earliest unresolved day remains inconclusive or unavailable after the bounded resolution window, the protection can be cancelled and its original premium refunded; no payout is made.
               </p>
             </div>
           </div>
@@ -161,7 +165,7 @@ function TransparencyPage() {
               "They check both market sources — Validators independently fetch the daily closing prices from Binance and Gate.",
               "They compare prices with your protected price — The prices are checked against the protection level recorded when you purchased.",
               "Settlement only completes after agreement — A result is accepted only when validators agree on the outcome.",
-              "Disagreement means the day is checked again — If the data does not agree, Commoda does not guess. That settlement day remains unresolved and can be retried.",
+              "Disagreement means the day is checked again — If the data does not agree, Commoda does not guess. That settlement day remains unresolved, can be retried for three complete UTC days, and may then be cancelled with the original premium refunded.",
             ].map((t) => (
               <li
                 key={t}
