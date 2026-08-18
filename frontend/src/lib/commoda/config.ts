@@ -1,7 +1,7 @@
 import { testnetBradbury } from "genlayer-js/chains";
 import { getAddress, type Address } from "viem";
 
-export const COMMODA_CONTRACT_ADDRESS = "0x460bc57A6D226eEe437bdc9cb977c049e4750b5b" as Address;
+export const COMMODA_CONTRACT_ADDRESS = "0x35D3a7EbF3c76d4bAF531d87191dAe9859854b1e" as Address;
 export const GENLAYER_RPC_ENDPOINT = "https://rpc-bradbury.genlayer.com";
 export const GENLAYER_CHAIN = testnetBradbury;
 export const CONTRACT_EXPLORER = "https://explorer-bradbury.genlayer.com";

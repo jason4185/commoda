@@ -66,9 +66,15 @@ const OUTCOMES = [
   },
   {
     icon: CircleAlert,
-    label: "Checking again",
+    label: "Sources disagree",
     tone: "text-warning border-warning/30 bg-warning/5",
     body: "The day stays open and is checked again. It does not count against your protection.",
+  },
+  {
+    icon: CircleAlert,
+    label: "Source data unavailable",
+    tone: "text-warning border-warning/30 bg-warning/5",
+    body: "Consensus could not obtain the required source data. The day stays open and can be retried.",
   },
 ];
 

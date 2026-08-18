@@ -149,17 +149,18 @@ def test_historical_sources_use_exact_completed_utc_candles():
     assert "opened != start" in TEXT
     assert "closed != start + DAY * 1000 - 1" in TEXT
     assert '== start' in TEXT
-    assert "Gate candle missing" in TEXT
+    for category in ("MISSING_CANDLE", "INVALID_CANDLE", "INVALID_PRICE", "MALFORMED", "OVERSIZED_RESPONSE"):
+        assert category in TEXT
 
 
 def test_historical_directional_agreement_has_no_tolerance_or_average():
     historical = TEXT.split("def _historical", 1)[1].split("def _same_error", 1)[0]
-    settlement = TEXT.split("def settle_protection", 1)[1].split("def claim_payout", 1)[0]
+    settlement = TEXT.split("def _apply_evidence_result", 1)[1].split("def _available", 1)[0]
     assert "TOLERANCE" not in historical
     assert "(b + g) // 2" not in historical + settlement
     assert "abs(b - g)" not in historical + settlement
-    assert "binance_close <= p.trigger_price" in settlement
-    assert "gate_close <= p.trigger_price" in settlement
+    assert "evidence.binance_close <= p.trigger_price" in settlement
+    assert "evidence.gate_close <= p.trigger_price" in settlement
     assert "b and g" in settlement
     assert "not b and not g" in settlement
 
@@ -175,9 +176,9 @@ def test_historical_outcomes():
 def test_protection_specific_results_and_ordering():
     assert "class DayResult" in TEXT
     assert "UNPROCESSED" in TEXT
-    assert "self.days[day_key] = DayResult(result" in TEXT
+    assert "result, evidence.version, now" in TEXT
     assert "p.next_date >= _today()" in TEXT
-    assert "prior.status == INCONCLUSIVE" in TEXT
+    assert "prior.status in (INCONCLUSIVE, UNAVAILABLE)" in TEXT
     assert "self.days[_day_key(protection_id, p.next_date)]" in TEXT
     assert "settlement_readiness(self, protection_id" in TEXT
     assert "cancellation_readiness(self, protection_id" in TEXT
@@ -187,20 +188,20 @@ def test_protection_specific_results_and_ordering():
 
 
 def test_inconclusive_blocks_progress_and_retries_versioned_evidence():
-    settlement = TEXT.split("def settle_protection", 1)[1].split("def claim_payout", 1)[0]
+    settlement = TEXT.split("def _apply_evidence_result", 1)[1].split("def _available", 1)[0]
     assert "return result" in settlement
     assert "if result == INCONCLUSIVE" in settlement
     assert "p.settled_days += 1" in settlement
     assert "self.settlement_versions.get(base, 0) + 1" in TEXT
     assert 'base + "|v" + str(version)' in TEXT
-    assert "prior.status == INCONCLUSIVE" in settlement
+    assert "prior.status in (INCONCLUSIVE, UNAVAILABLE)" in TEXT
     assert 'self.current_settlement.get(base, "")' in TEXT
     assert "old version" not in TEXT
 
 
-def test_terminal_resolution_policy_is_date_based_and_id_only():
+def test_terminal_resolution_requires_recorded_attempt_and_is_id_only():
     assert "TERMINAL_GRACE_DAYS = 3" in TEXT
-    assert "today_number < unresolved_number + 1 + TERMINAL_GRACE_DAYS" in TEXT
+    assert "_timestamp_epoch(result.first_unresolved_at) + TERMINAL_GRACE_DAYS * DAY" in TEXT
     assert 'def cancel_unresolved_protection(self, protection_id: u256) -> None:' in TEXT
     assert 'def cancellation_readiness(self, protection_id: u256) -> dict:' in TEXT
     cancellation = TEXT.split("def cancel_unresolved_protection", 1)[1].split("def claim_payout", 1)[0]
@@ -208,19 +209,22 @@ def test_terminal_resolution_policy_is_date_based_and_id_only():
     assert "date:" not in cancellation
     assert "version" not in cancellation
     assert "_historical" not in cancellation
+    assert "self._settle_evidence(p.market, p.next_date, True)" in cancellation
     assert "p.state != ACTIVE" in cancellation
-    assert "day_status not in (UNPROCESSED, INCONCLUSIVE)" in cancellation
+    assert "day_result.status == UNPROCESSED or day_result.first_unresolved_at == \"\"" in cancellation
+    assert "day_result.status not in (INCONCLUSIVE, UNAVAILABLE)" in cancellation
 
 
 def test_historical_correction_policy_is_explicit_and_fail_closed():
     assert "settlement records are append-only" in TEXT
     assert "protection-day result is immutable" in TEXT
-    assert "only UNPROCESSED/INCONCLUSIVE" in TEXT
+    assert "only unresolved protection days" in TEXT
     assert "later version never reopens or rewrites" in TEXT
     cancellation = TEXT.split("def cancel_unresolved_protection", 1)[1].split("def claim_payout", 1)[0]
     assert "p.next_date" in cancellation
-    assert "self._day_status(p)" in cancellation
+    assert "self._day_result(p)" in cancellation
     assert "gl.nondet" not in cancellation
+    assert "self._settle_evidence(p.market, p.next_date, True)" in cancellation
 
 
 def test_shared_evidence_is_trigger_neutral():
@@ -477,7 +481,7 @@ def test_caller_specific_read_fields_follow_write_permissions():
     card = TEXT.split("def _card", 1)[1].split("def _reference", 1)[0]
     assert '"can_settle":' in card
     assert '"can_cancel":' in card
-    assert "status == \"READY\" or status == \"INCONCLUSIVE_RETRY\"" in card
+    assert "status in (\"READY\", \"INCONCLUSIVE_RETRY\", \"UNAVAILABLE_RETRY\")" in card
     assert 'self._claim_status(p) == "READY"' in card
     readiness = TEXT.split("def settlement_readiness", 1)[1].split("def claim_readiness", 1)[0]
     assert "self._settlement_status(p, requested_date, True)" in readiness

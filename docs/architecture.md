@@ -54,21 +54,38 @@ means `NOT_BREACHED`, and disagreement means `INCONCLUSIVE`.
 
 Evidence retries create a new version instead of overwriting the old record.
 An `UNPROCESSED` protection day creates the initial market/date evidence when
-none is cached or reuses the current cached version; only an `INCONCLUSIVE`
-retry explicitly refreshes that market/date into a newer version. Each
-protection stores its own per-date result. `UNPROCESSED` and `INCONCLUSIVE`
-remain unresolved; the contract always settles the earliest unresolved date,
+none is cached or reuses the current cached version; only an `INCONCLUSIVE` or
+`UNAVAILABLE` retry explicitly refreshes that market/date into a newer version.
+Each protection stores its own per-date result. Any consensus-verified inability
+to obtain valid Binance/Gate evidence is recorded as `UNAVAILABLE`, with the
+affected source and deterministic failure category bound into the result;
+malformed, missing, wrong, or otherwise unusable evidence therefore has a
+bounded retry/cancellation path without being treated as valid price data.
+`UNPROCESSED`,
+`INCONCLUSIVE`, and `UNAVAILABLE` remain unresolved; the contract always settles the earliest unresolved date,
 so cached later evidence cannot skip an earlier day. A conclusive `BREACHED`
 or `NOT_BREACHED` result is immutable for that protection/day; later versions
 never reopen a conclusive result.
 
-If the earliest unresolved coverage date remains `UNPROCESSED` or
-`INCONCLUSIVE` through three complete UTC retry days, an authorized caller may
-cancel the protection using the internally stored date. Cancellation marks the
-protection `CANCELLED`, releases the reserved payout, refunds the original
-premium to the protection owner, and makes no payout. It does not fabricate
-evidence or skip to a later date. The refund is the full original premium;
-there is no prorating for earlier conclusively checked days.
+An untouched `UNPROCESSED` day cannot be cancelled. A settlement attempt must
+first persist `INCONCLUSIVE` or `UNAVAILABLE`, recording its first unresolved
+timestamp. The three-day terminal grace begins at that timestamp, so waiting
+past the market date cannot make a first failed attempt immediately refundable.
+After the grace period, an authorized caller may request cancellation using the
+internally stored earliest date, but the transaction performs a fresh consensus
+recheck first. If the result is `BREACHED` or `NOT_BREACHED`, normal settlement
+applies and no refund is made; only a result that remains `INCONCLUSIVE` or
+`UNAVAILABLE` can reach `CANCELLED`. Cancellation releases the reserved payout,
+refunds the original premium to the protection owner, and makes no payout. It
+does not fabricate evidence or skip to a later date. The refund is the full
+original premium; there is no prorating for earlier conclusively checked days.
+
+Native payout and premium-refund transfers are emitted with
+`on="finalized"`. The frontend therefore treats `ACCEPTED` as accepted but
+awaiting finality for claims and refunds, persists the pending financial
+transaction marker across browser reloads, and displays financial completion
+only after the GenLayer transaction reaches `FINALIZED`. Failed finality is
+shown as unresolved rather than inferred from a latest-nonfinal lifecycle read.
 
 ## Reserves, lifecycle, and authorization
 

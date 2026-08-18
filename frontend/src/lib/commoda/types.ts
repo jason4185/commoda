@@ -4,10 +4,11 @@ export type DropPct = 1 | 2 | 3;
 export type DurationDays = 7 | 14 | 30;
 
 export type ProtectionState = "ACTIVE" | "CLAIMABLE" | "EXPIRED" | "CLAIMED" | "CANCELLED";
+export type FinancialFinality = "UNKNOWN" | "PENDING" | "FAILED" | "UNAVAILABLE" | "FINALIZED";
 
-export type CancellationStatus = "UNAUTHORIZED" | "NOT_ACTIVE" | "CONCLUSIVE" | "GRACE_PERIOD" | "READY";
+export type CancellationStatus = "UNAUTHORIZED" | "NOT_ACTIVE" | "DAY_CONCLUSIVE" | "SETTLEMENT_ATTEMPT_REQUIRED" | "SETTLEMENT_DAY_NOT_COMPLETE" | "GRACE_PERIOD" | "READY";
 
-export type DayResult = "UNPROCESSED" | "BREACHED" | "NOT_BREACHED" | "INCONCLUSIVE";
+export type DayResult = "UNPROCESSED" | "BREACHED" | "NOT_BREACHED" | "INCONCLUSIVE" | "UNAVAILABLE";
 
 export interface Market {
   id: MarketId;
@@ -36,6 +37,9 @@ export interface SettlementDay {
   binanceClose: number | null;
   gateClose: number | null;
   evidenceVersion?: number;
+  firstUnresolvedAt?: string;
+  unresolvedSource?: string;
+  unresolvedClass?: string;
   note?: string;
 }
 
@@ -62,6 +66,7 @@ export interface Protection {
   canCancel?: boolean;
   cancellationStatus?: CancellationStatus;
   cancellationEligibleDate?: string;
+  cancellationEligibleAt?: string;
 }
 
 export interface PoolStats {

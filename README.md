@@ -12,10 +12,10 @@ Commoda v1 supports three curated markets: WTI Crude Oil, Brent Crude Oil, and N
 | --- | --- |
 | Network | GenLayer Bradbury Testnet |
 | Chain ID | `4221` |
-| Contract | [`0x460bc57A6D226eEe437bdc9cb977c049e4750b5b`](https://explorer-bradbury.genlayer.com/address/0x460bc57A6D226eEe437bdc9cb977c049e4750b5b) |
+| Contract | [`0x35D3a7EbF3c76d4bAF531d87191dAe9859854b1e`](https://explorer-bradbury.genlayer.com/address/0x35D3a7EbF3c76d4bAF531d87191dAe9859854b1e) |
 | Source | [`contract/CommodaProtection.py`](contract/CommodaProtection.py) |
 | Status | Deployed |
-| Audited production source SHA-256 | `d1e723cfba976a55f5e559af673c5557a4ae96b062585b7a72b1a6664dae9683` |
+| Audited production source SHA-256 | `ca9ba96a50c56f6afc2035282c533c0ab002ec4c4db3062b644419b05edfc05f` |
 
 ## Why Commoda
 
@@ -103,11 +103,13 @@ flowchart TD
     Outcome -->|Both above protected price| Clear[NOT_BREACHED]
     Outcome -->|Both at or below protected price| Claimable[BREACHED: CLAIMABLE]
     Outcome -->|Sources disagree| Retry[INCONCLUSIVE: retry same day]
+    Outcome -->|Required source unavailable by consensus| Unavailable[UNAVAILABLE: retry same day]
     Clear --> More{More days?}
     More -->|Yes| Check
     More -->|No| Expired[EXPIRED]
     Retry --> Check
-    Retry -->|After three complete retry days| Cancel[Cancel and refund premium]
+    Unavailable --> Check
+    Retry -->|After recorded unresolved attempt + 3 days| Cancel[Cancel and refund premium]
     Claimable --> Claim[Owner claims fixed payout]
     Claim --> Claimed[CLAIMED]
     Cancel --> Cancelled[CANCELLED]
@@ -157,12 +159,13 @@ For each covered day, the contract records one of these results:
 
 | Contract result | Frontend label | Meaning |
 | --- | --- | --- |
-| `UNPROCESSED` | Waiting | The day has not been settled. |
+| `UNPROCESSED` | Waiting to be checked | No settlement attempt has produced a persistent unresolved result. |
 | `BREACHED` | Protected price reached | Both sources confirm the protected drop. |
 | `NOT_BREACHED` | No protected drop | Both sources remain above the protected price. |
-| `INCONCLUSIVE` | Checking again | The sources disagree and the same day can be retried. |
+| `INCONCLUSIVE` | Sources disagree | The sources disagree and the same day can be retried. |
+| `UNAVAILABLE` | Source data unavailable | Consensus verified that required source evidence was unavailable; the same day can be retried. |
 
-`INCONCLUSIVE` is not treated as a forced failure or success. The protection remains active, `next_date` does not advance, `settled_days` does not increase, reserves stay locked, and later days remain blocked. Settlement can be retried for three complete UTC days after the unresolved coverage date. If the earliest unresolved day is still `UNPROCESSED` or `INCONCLUSIVE` at the boundary, an authorized caller may terminally cancel the protection: the payout reserve is released, the original premium is refunded to the protection owner, and no payout is made. The caller cannot choose a different date.
+`INCONCLUSIVE` is not treated as a forced failure or success. The protection remains active, `next_date` does not advance, `settled_days` does not increase, reserves stay locked, and later days remain blocked. A consensus-verified inability to obtain valid Binance/Gate evidence is recorded as `UNAVAILABLE`; its metadata binds the affected source and deterministic failure category, and the same day can be retried. An untouched `UNPROCESSED` day is not cancellable: a settlement attempt must first persist `INCONCLUSIVE` or `UNAVAILABLE`. The first recorded unresolved attempt starts a three-day grace period; cancellation invokes a fresh consensus recheck at the exact timestamp three complete UTC days later. If that recheck is conclusive, normal settlement wins and no refund is made; only evidence that remains unresolved can produce the terminal refund. The payout reserve is released, the original premium is refunded to the protection owner, and no payout is made. The caller cannot choose a different date.
 
 Protection states are shown to users as:
 
@@ -171,7 +174,7 @@ Protection states are shown to users as:
 | `ACTIVE` | Active |
 | `CLAIMABLE` | Ready to claim |
 | `EXPIRED` | Ended |
-| `CLAIMED` | Paid |
+| `CLAIMED` | Claim accepted; shown as Paid only after finalized transfer proof |
 | `CANCELLED` | Cancelled |
 
 ## Data sources and verification
@@ -224,7 +227,7 @@ Purchases require enough available liquidity, including the incoming premium, to
 
 The owner may approve at most five settlement operators. Operators can trigger settlement but cannot choose the date, evidence, outcome, payout, or claimant.
 
-Settlement is caller-triggered. The contract does not submit a transaction when UTC time changes. A protection owner, operator, or optional keeper can trigger a due settlement. If nobody calls, the state remains safe but progression is delayed. Once the earliest unresolved coverage date has had three complete UTC retry days, the same authorized callers can request terminal cancellation. Cancellation uses the internally stored earliest date, releases the payout reserve, refunds the original premium, and never skips to a later date. This is an operational liveness boundary, not a settlement-ordering or authorization bypass.
+Settlement is caller-triggered. The contract does not submit a transaction when UTC time changes. A protection owner, operator, or optional keeper can trigger a due settlement. If nobody calls, the state remains safe but progression is delayed. An untouched `UNPROCESSED` day cannot be cancelled. After a settlement attempt records `INCONCLUSIVE` or consensus-verified `UNAVAILABLE`, three complete UTC days must elapse from that first unresolved attempt before the same authorized callers can request terminal cancellation. Cancellation uses the internally stored earliest date and performs a fresh consensus recheck; if the day is now conclusive, normal settlement applies instead of a refund. A refund is made only when the recheck remains unresolved. This is an operational liveness boundary, not a settlement-ordering or authorization bypass.
 
 Pausing blocks new purchases only. Existing protections can still settle, retry inconclusive days, claim payouts, and use an eligible terminal cancellation.
 
@@ -246,7 +249,13 @@ Transaction progress is presented as:
 Preparing → Awaiting wallet → Submitted → Processing → Accepted
 ```
 
-`Accepted` is the user-facing GenLayer transaction success state.
+For `claim_payout` and `cancel_unresolved_protection`, the frontend continues
+with `Accepted → Awaiting Finality → Finalized`. Native payout/refund transfers
+use GenLayer `on="finalized"`, so the UI persists pending financial
+transactions across browser reloads and does not describe money as paid or
+refunded until `Finalized`. Failed finality is shown as unresolved rather than
+as Paid or Premium refunded. Other writes retain the existing `Accepted`
+completion semantics.
 
 ## What Commoda does not trust
 
@@ -313,13 +322,15 @@ bun run build
 Contract validation from the repository root:
 
 ```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
 pytest -q tests/direct
 genvm-lint check contract/CommodaProtection.py
 genvm-lint schema contract/CommodaProtection.py
 genvm-lint typecheck contract/CommodaProtection.py
 ```
 
-Historical settlement evidence is fail-closed. Binance/Gate disagreement remains `INCONCLUSIVE`, and unavailable or malformed source data does not fabricate a result. An `UNPROCESSED` protection day creates the initial market/date evidence when none is cached or reuses the current cached version; only an `INCONCLUSIVE` retry explicitly refreshes that market/date into a newer version. Once a protection day is conclusively `BREACHED` or `NOT_BREACHED`, its result is not reopened or rewritten. After the bounded three-day retry window, the earliest unresolved day may be terminally cancelled, releasing its payout reserve and refunding the original premium without making a payout.
+Historical settlement evidence is fail-closed. Binance/Gate disagreement remains `INCONCLUSIVE`; consensus-verified inability to obtain valid evidence is recorded as `UNAVAILABLE` with source and deterministic failure-class binding. An `UNPROCESSED` protection day creates the initial market/date evidence when none is cached or reuses the current cached version; only an `INCONCLUSIVE` or `UNAVAILABLE` retry explicitly refreshes that market/date into a newer version. Once a protection day is conclusively `BREACHED` or `NOT_BREACHED`, its result is not reopened or rewritten. After a recorded unresolved attempt and its bounded three-day grace window, cancellation performs a final consensus recheck: conclusive evidence resolves the day normally, while still-unresolved evidence may release its payout reserve and refund the original premium without making a payout.
 
 The terminal policy refunds the full original premium, without prorating for earlier days that may already have been conclusively checked.
 
@@ -327,7 +338,9 @@ Previously recorded validation results:
 
 | Check | Result |
 | --- | --- |
-| Production-focused direct suite | 95 passed, 0 failed |
+| Production-focused direct suite | 118 passed, 0 failed |
+| Static contract suite | 63 passed, 0 failed |
+| Frontend unit tests | 11 passed, 0 failed |
 | Frontend `bun x tsc --noEmit` | PASS |
 | Frontend `bun run build` | PASS |
 | GenVM lint and validation | PASS |

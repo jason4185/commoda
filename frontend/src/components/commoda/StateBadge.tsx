@@ -1,4 +1,6 @@
 import type { DayResult, ProtectionState } from "@/lib/commoda/types";
+import type { FinancialFinality } from "@/lib/commoda/types";
+import { getProtectionStatusLabel } from "@/lib/commoda/service";
 
 const base =
   "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold tracking-tight";
@@ -11,19 +13,11 @@ const stateStyles: Record<ProtectionState, string> = {
   CANCELLED: "border-warning/35 bg-warning/12 text-warning",
 };
 
-const stateLabels: Record<ProtectionState, string> = {
-  ACTIVE: "Active",
-  CLAIMABLE: "Ready to claim",
-  EXPIRED: "Ended",
-  CLAIMED: "Paid",
-  CANCELLED: "Cancelled",
-};
-
-export function StateBadge({ state }: { state: ProtectionState }) {
+export function StateBadge({ state, financialFinality = "UNKNOWN" }: { state: ProtectionState; financialFinality?: FinancialFinality }) {
   return (
     <span className={`${base} ${stateStyles[state]}`}>
       <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
-      {stateLabels[state]}
+      {getProtectionStatusLabel(state, financialFinality)}
     </span>
   );
 }
@@ -33,13 +27,15 @@ const resultStyles: Record<DayResult, string> = {
   BREACHED: "border-danger/30 bg-danger/10 text-danger",
   NOT_BREACHED: "border-success/25 bg-success/10 text-success",
   INCONCLUSIVE: "border-warning/35 bg-warning/12 text-warning",
+  UNAVAILABLE: "border-warning/35 bg-warning/12 text-warning",
 };
 
 const resultLabels: Record<DayResult, string> = {
-  UNPROCESSED: "Not checked yet",
+  UNPROCESSED: "Waiting to be checked",
   BREACHED: "Protected price reached",
   NOT_BREACHED: "No protected drop",
-  INCONCLUSIVE: "Checking again",
+  INCONCLUSIVE: "Sources disagree",
+  UNAVAILABLE: "Source data unavailable",
 };
 
 export function ResultBadge({ result }: { result: DayResult }) {

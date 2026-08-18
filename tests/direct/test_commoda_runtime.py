@@ -443,9 +443,9 @@ def test_source_failure_preserves_state_and_retry_succeeds(direct_vm, direct_dep
     _warp(direct_vm, "2026-08-03T00:00:01Z")
     _mock_settlement(direct_vm, "2026-08-02", binance_status=503)
     direct_vm.sender = direct_owner
-    with direct_vm.expect_revert("Binance unavailable"):
-        contract.settle_protection(0)
+    assert contract.settle_protection(0) == "UNAVAILABLE"
     assert contract.get_protection(0)["state"] == "ACTIVE"
+    assert contract.get_protection_day_result(0, "2026-08-02")["status"] == "UNAVAILABLE"
     assert contract.get_current_market_settlement_version("WTI", "2026-08-02")["version"] == 0
     _mock_settlement(direct_vm, "2026-08-02", "98", "98")
     assert contract.settle_protection(0) == "CLAIMABLE"
@@ -468,6 +468,40 @@ def test_purchase_and_settlement_consensus_validators(direct_vm, direct_deploy, 
     _mock_settlement(direct_vm, "2026-08-02", "98", "98")
     assert direct_vm.run_validator(index=1) is True
     _mock_settlement(direct_vm, "2026-08-02", "97", "98")
+    assert direct_vm.run_validator(index=1) is False
+
+
+def test_unavailable_settlement_requires_validator_agreement(direct_vm, direct_deploy, direct_owner, direct_alice):
+    direct_vm.warp("2026-08-01T12:00:00Z")
+    contract = _deploy_funded(direct_vm, direct_deploy, direct_owner)
+    _purchase(direct_vm, contract, direct_alice)
+    _warp(direct_vm, "2026-08-03T00:00:01Z")
+    _mock_settlement(direct_vm, "2026-08-02", binance_status=503)
+    direct_vm.sender = direct_owner
+    assert contract.settle_protection(0) == "UNAVAILABLE"
+    _mock_settlement(direct_vm, "2026-08-02", binance_status=503)
+    assert direct_vm.run_validator(index=1) is True
+    _mock_settlement(direct_vm, "2026-08-02", "100", "100")
+    assert direct_vm.run_validator(index=1) is False
+
+
+def test_unresolved_failure_identity_binds_source_and_class(direct_vm, direct_deploy, direct_owner, direct_alice):
+    direct_vm.warp("2026-08-01T12:00:00Z")
+    contract = _deploy_funded(direct_vm, direct_deploy, direct_owner)
+    _purchase(direct_vm, contract, direct_alice)
+    _warp(direct_vm, "2026-08-03T00:00:01Z")
+    _mock_settlement(direct_vm, "2026-08-02", binance_status=503)
+    direct_vm.sender = direct_owner
+    assert contract.settle_protection(0) == "UNAVAILABLE"
+
+    _mock_settlement(direct_vm, "2026-08-02", gate_status=503)
+    assert direct_vm.run_validator(index=1) is False
+
+    _mock_settlement(direct_vm, "2026-08-02", binance_status=503)
+    assert direct_vm.run_validator(index=1) is True
+
+    _mock_settlement(direct_vm, "2026-08-02", binance_status=200)
+    direct_vm.mock_web(r"fapi\.binance\.com/fapi/v1/klines", {"status": 200, "body": "{bad"})
     assert direct_vm.run_validator(index=1) is False
 
 

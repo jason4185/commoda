@@ -14,7 +14,7 @@ MAX_ATTENTION_PAGE = 50
 MAX_SOURCE_BYTES = 200000
 TERMINAL_GRACE_DAYS = 3
 ACTIVE, CLAIMABLE, EXPIRED, CLAIMED, CANCELLED = "ACTIVE", "CLAIMABLE", "EXPIRED", "CLAIMED", "CANCELLED"
-UNPROCESSED, BREACHED, NOT_BREACHED, INCONCLUSIVE = "UNPROCESSED", "BREACHED", "NOT_BREACHED", "INCONCLUSIVE"
+UNPROCESSED, BREACHED, NOT_BREACHED, INCONCLUSIVE, UNAVAILABLE = "UNPROCESSED", "BREACHED", "NOT_BREACHED", "INCONCLUSIVE", "UNAVAILABLE"
 MARKETS = ("WTI", "BRENT", "NATGAS")
 BS = {"WTI": "CLUSDT", "BRENT": "BZUSDT", "NATGAS": "NATGASUSDT"}
 GS = {"WTI": "CL_USDT", "BRENT": "BZ_USDT", "NATGAS": "NG_USDT"}
@@ -54,6 +54,9 @@ class DayResult:
     status: str
     evidence_version: u256
     updated_at: str
+    first_unresolved_at: str
+    unresolved_source: str
+    unresolved_class: str
 
 @allow_storage
 @dataclass
@@ -146,6 +149,24 @@ def _today() -> str:
 def _epoch(date: str) -> int:
     return _date_parts(date)[3] * DAY
 
+def _timestamp_epoch(value: str) -> int:
+    if len(value) < 19 or value[10] != "T" or value[13] != ":" or value[16] != ":":
+        _err("[EXPECTED]", "invalid timestamp")
+    _, _, _, day = _date_parts(value[:10])
+    try:
+        hour, minute, second = int(value[11:13]), int(value[14:16]), int(value[17:19])
+    except Exception:
+        _err("[EXPECTED]", "invalid timestamp")
+    if hour > 23 or minute > 59 or second > 59:
+        _err("[EXPECTED]", "invalid timestamp")
+    return day * DAY + hour * 3600 + minute * 60 + second
+
+def _timestamp(value: int) -> str:
+    day, remainder = value // DAY, value % DAY
+    hour, remainder = remainder // 3600, remainder % 3600
+    minute, second = remainder // 60, remainder % 60
+    return _date(day) + "T%02d:%02d:%02dZ" % (hour, minute, second)
+
 def _event_bps_from_percent(event_percent: int) -> int:
     if event_percent not in EVENT_PERCENTS:
         _err("[EXPECTED]", "invalid event percent")
@@ -181,41 +202,103 @@ def _source(res, name: str):
         _err("[EXTERNAL]", name + " http error")
     return _json(res)
 
+def _historical(market: str, date: str) -> dict:
+    b, g = _binance(market, date), _gate(market, date)
+    failures = [x for x in (b, g) if x["kind"] == "UNRESOLVED"]
+    if failures:
+        return {"kind": "UNRESOLVED",
+                "source": "+".join(x["source"] for x in failures),
+                "failure_class": "+".join(x["failure_class"] for x in failures)}
+    return {"kind": "EVIDENCE", "b": b["close"], "g": g["close"],
+            "bt": b["timestamp"], "gt": g["timestamp"]}
+
+def _unresolved(source: str, failure_class: str) -> dict:
+    return {"kind": "UNRESOLVED", "source": source, "failure_class": failure_class}
+
+def _historical_response(res, source: str) -> dict:
+    try:
+        status = int(res.status)
+    except Exception:
+        return _unresolved(source, "PROVIDER_ERROR")
+    if status in (408, 425, 429) or status >= 500:
+        return _unresolved(source, "TRANSIENT")
+    if status != 200:
+        return _unresolved(source, "HTTP_ERROR")
+    try:
+        body = getattr(res, "body", None)
+        if body is None:
+            return _unresolved(source, "MALFORMED")
+        if len(body) > MAX_SOURCE_BYTES:
+            return _unresolved(source, "OVERSIZED_RESPONSE")
+        return {"kind": "PAYLOAD", "payload": json.loads(body.decode("utf-8"))}
+    except Exception:
+        return _unresolved(source, "MALFORMED")
+
+def _historical_price(raw, source: str) -> dict:
+    try:
+        return {"kind": "PRICE", "value": _price(raw)}
+    except Exception:
+        return _unresolved(source, "INVALID_PRICE")
+
 def _binance(market: str, date: str):
     start = _epoch(date) * 1000
     url = "https://fapi.binance.com/fapi/v1/klines?symbol=" + BS[market] + "&interval=1d&startTime=" + str(start) + "&endTime=" + str(start + DAY * 1000) + "&limit=1"
     try:
-        row = _source(gl.nondet.web.get(url), "Binance")[0]
-        opened, close, closed = int(row[0]), _price(row[4]), int(row[6])
+        response = _historical_response(gl.nondet.web.get(url), "BINANCE")
+        if response["kind"] == "UNRESOLVED":
+            return response
+        rows = response["payload"]
+        if not isinstance(rows, list) or len(rows) == 0:
+            return _unresolved("BINANCE", "MISSING_CANDLE")
+        if len(rows) != 1:
+            return _unresolved("BINANCE", "INVALID_CANDLE")
+        row = rows[0]
+        try:
+            opened, closed = int(row[0]), int(row[6])
+        except Exception:
+            return _unresolved("BINANCE", "MALFORMED")
+        price = _historical_price(row[4], "BINANCE")
+        if price["kind"] == "UNRESOLVED":
+            return price
         if opened != start or closed != start + DAY * 1000 - 1:
-            _err("[EXTERNAL]", "Binance wrong candle")
-        return close, opened
-    except gl.vm.UserError:
-        raise
+            return _unresolved("BINANCE", "INVALID_CANDLE")
+        return {"kind": "PART", "close": price["value"], "timestamp": opened}
     except Exception:
-        _err("[EXTERNAL]", "malformed Binance")
+        return _unresolved("BINANCE", "PROVIDER_ERROR")
 
 def _gate(market: str, date: str):
     start = _epoch(date)
     url = "https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=" + GS[market] + "&interval=1d&from=" + str(start) + "&to=" + str(start + DAY)
     try:
-        rows, found = _source(gl.nondet.web.get(url), "Gate"), None
+        response = _historical_response(gl.nondet.web.get(url), "GATE")
+        if response["kind"] == "UNRESOLVED":
+            return response
+        rows = response["payload"]
+        if not isinstance(rows, list) or len(rows) == 0:
+            return _unresolved("GATE", "MISSING_CANDLE")
+        matches = []
         for row in rows:
-            if int(row[0] if isinstance(row, list) else row["t"]) == start:
-                found = row
-                break
-        if found is None:
-            _err("[EXTERNAL]", "Gate candle missing")
-        return _price(found[2] if isinstance(found, list) else found["c"]), start
-    except gl.vm.UserError:
-        raise
+            try:
+                timestamp = int(row[0] if isinstance(row, list) else row["t"])
+            except Exception:
+                return _unresolved("GATE", "MALFORMED")
+            if timestamp == start:
+                matches.append(row)
+        if len(matches) == 0:
+            return _unresolved("GATE", "INVALID_CANDLE")
+        if len(matches) != 1:
+            return _unresolved("GATE", "INVALID_CANDLE")
+        row = matches[0]
+        try:
+            raw_price = row[2] if isinstance(row, list) else row["c"]
+        except Exception:
+            return _unresolved("GATE", "MALFORMED")
+        price = _historical_price(raw_price, "GATE")
+        if price["kind"] == "UNRESOLVED":
+            return price
+        return {"kind": "PART", "close": price["value"], "timestamp": start}
     except Exception:
-        _err("[EXTERNAL]", "malformed Gate")
-
-def _historical(market: str, date: str) -> dict:
-    b, bt = _binance(market, date)
-    g, gt = _gate(market, date)
-    return {"b": b, "g": g, "bt": bt, "gt": gt}
+        return _unresolved("GATE", "PROVIDER_ERROR")
 
 def _same_error(result, fn) -> bool:
     leader = getattr(result, "message", "")
@@ -348,48 +431,114 @@ class CommodaProtection(gl.Contract):
             stats.cancelled += 1
         self.user_stats[key] = stats
 
+    def _day_result(self, p: Protection) -> DayResult:
+        return self.days.get(_day_key(p.protection_id, p.next_date), DayResult(UNPROCESSED, 0, "", "", "", ""))
+
     def _day_status(self, p: Protection) -> str:
-        return self.days.get(_day_key(p.protection_id, p.next_date), DayResult(UNPROCESSED, 0, "")).status
+        return self._day_result(p).status
 
     def _cancellation_status(self, p: Protection, check_auth: bool) -> str:
         if check_auth and not self._caller_can_settle(p):
             return "UNAUTHORIZED"
         if p.state != ACTIVE:
             return "NOT_ACTIVE"
-        if self._day_status(p) in (BREACHED, NOT_BREACHED):
-            return "CONCLUSIVE"
+        result = self._day_result(p)
+        if result.status in (BREACHED, NOT_BREACHED):
+            return "DAY_CONCLUSIVE"
+        if result.status == UNPROCESSED or result.first_unresolved_at == "":
+            return "SETTLEMENT_ATTEMPT_REQUIRED"
         today_number = _date_parts(_today())[3]
         unresolved_number = _date_parts(p.next_date)[3]
-        if today_number < unresolved_number + 1 + TERMINAL_GRACE_DAYS:
+        if today_number <= unresolved_number:
+            return "SETTLEMENT_DAY_NOT_COMPLETE"
+        if _timestamp_epoch(_now()) < _timestamp_epoch(result.first_unresolved_at) + TERMINAL_GRACE_DAYS * DAY:
             return "GRACE_PERIOD"
         return "READY"
 
-    def _settle_evidence(self, market: str, date: str, refresh: bool) -> Settlement:
+    def _cancellation_eligible_at(self, p: Protection) -> str:
+        first = self._day_result(p).first_unresolved_at
+        return "" if first == "" else _timestamp(_timestamp_epoch(first) + TERMINAL_GRACE_DAYS * DAY)
+
+    def _settle_evidence(self, market: str, date: str, refresh: bool) -> dict:
         # Correction policy: settlement records are append-only. A conclusive
-        # protection-day result is immutable; only UNPROCESSED/INCONCLUSIVE
-        # protection days may consume a newer shared market/date version.
+        # protection-day result is immutable; only unresolved protection days
+        # may consume a newer shared market/date version.
         base = market + "|" + date
         current = self.current_settlement.get(base, "")
         if current != "" and not refresh:
-            return self.settlements[current]
+            return {"kind": "EVIDENCE", "settlement": self.settlements[current]}
         def fetch() -> dict:
-            return _historical(market, date)
+            try:
+                return _historical(market, date)
+            except Exception:
+                return _unresolved("UNKNOWN", "PROVIDER_ERROR")
         def verify(result):
             if not isinstance(result, gl.vm.Return):
-                return _same_error(result, fetch)
+                return False
             try:
                 v, x = fetch(), result.calldata
+                if not isinstance(x, dict) or x.get("kind") != v.get("kind"):
+                    return False
+                if x["kind"] == "UNRESOLVED":
+                    return x.get("source") == v.get("source") and x.get("failure_class") == v.get("failure_class")
                 return (v["b"] == x["b"] and v["g"] == x["g"] and
                         v["bt"] == x["bt"] and v["gt"] == x["gt"])
             except Exception:
                 return False
         result: dict = gl.vm.run_nondet_unsafe(fetch, verify)
+        if result["kind"] == "UNRESOLVED":
+            return result
         version = self.settlement_versions.get(base, 0) + 1
         key = base + "|v" + str(version)
         self.settlements[key] = Settlement(result["b"], result["g"], result["bt"], result["gt"], version, _now())
         self.current_settlement[base] = key
         self.settlement_versions[base] = version
-        return self.settlements[key]
+        return {"kind": "EVIDENCE", "settlement": self.settlements[key]}
+
+    def _record_unresolved(self, protection_id: u256, p: Protection, prior: DayResult, result: dict, now: str):
+        first = prior.first_unresolved_at if prior.first_unresolved_at != "" else now
+        self.days[_day_key(protection_id, p.next_date)] = DayResult(
+            UNAVAILABLE, prior.evidence_version, now, first,
+            result["source"], result["failure_class"])
+        p.last_result = UNAVAILABLE
+        self.protections[protection_id] = p
+
+    def _apply_evidence_result(self, protection_id: u256, p: Protection, prior: DayResult, evidence_result: dict, now: str) -> str:
+        evidence = evidence_result["settlement"]
+        b = evidence.binance_close <= p.trigger_price
+        g = evidence.gate_close <= p.trigger_price
+        result = BREACHED if b and g else NOT_BREACHED if not b and not g else INCONCLUSIVE
+        first = prior.first_unresolved_at
+        source, failure_class = ("BINANCE+GATE", "DISAGREEMENT") if result == INCONCLUSIVE else ("", "")
+        if result == INCONCLUSIVE and first == "":
+            first = now
+        self.days[_day_key(protection_id, p.next_date)] = DayResult(
+            result, evidence.version, now, first, source, failure_class)
+        p.last_result = result
+        if result == INCONCLUSIVE:
+            self.protections[protection_id] = p
+            return result
+        if result == BREACHED:
+            p.breach_date = p.next_date
+            old = p.state
+            p.state = CLAIMABLE
+            self._state(p, old, p.state)
+            stats = self.user_stats[_address_key(p.owner)]
+            stats.claimable_payout += p.payout
+            self.user_stats[_address_key(p.owner)] = stats
+        else:
+            p.settled_days += 1
+            if p.settled_days >= p.duration:
+                old = p.state
+                p.state = EXPIRED
+                self.reserved_liability -= p.payout
+                self._state(p, old, p.state)
+                self._invariant()
+            else:
+                p.next_date = _date(_date_parts(p.next_date)[3] + 1)
+                self.days[_day_key(protection_id, p.next_date)] = DayResult(UNPROCESSED, 0, _now(), "", "", "")
+        self.protections[protection_id] = p
+        return result
 
     def _available(self) -> int:
         return self.pool_balance - self.reserved_liability
@@ -440,8 +589,11 @@ class CommodaProtection(gl.Contract):
             return "SETTLEMENT_ORDER"
         if p.next_date >= _today():
             return "SETTLEMENT_DAY_NOT_COMPLETE"
-        if self.days.get(_day_key(p.protection_id, p.next_date), DayResult(UNPROCESSED, 0, "")).status == INCONCLUSIVE:
+        day_status = self._day_status(p)
+        if day_status == INCONCLUSIVE:
             return "INCONCLUSIVE_RETRY"
+        if day_status == UNAVAILABLE:
+            return "UNAVAILABLE_RETRY"
         return "READY"
 
     def _claim_status(self, p: Protection) -> str:
@@ -454,9 +606,12 @@ class CommodaProtection(gl.Contract):
         return "NOT_CLAIMABLE"
 
     def _day_view(self, protection_id: u256, date: str) -> dict:
-        result = self.days.get(_day_key(protection_id, date), DayResult(UNPROCESSED, 0, ""))
+        result = self.days.get(_day_key(protection_id, date), DayResult(UNPROCESSED, 0, "", "", "", ""))
         return {"protection_id": int(protection_id), "date": date, "status": result.status,
-                "evidence_version": int(result.evidence_version), "updated_at": result.updated_at}
+                "evidence_version": int(result.evidence_version), "updated_at": result.updated_at,
+                "first_unresolved_at": result.first_unresolved_at,
+                "unresolved_source": result.unresolved_source,
+                "unresolved_class": result.unresolved_class}
 
     def _settlement_view(self, key: str, market: str, date: str) -> dict:
         settlement = self.settlements.get(key)
@@ -492,7 +647,11 @@ class CommodaProtection(gl.Contract):
                 "settled_days": int(p.settled_days), "remaining_days": int(remaining),
                 "breach_date": p.breach_date, "last_result": p.last_result,
                 "claimable": p.state == CLAIMABLE,
-                "can_settle": status == "READY" or status == "INCONCLUSIVE_RETRY",
+                "can_settle": status in ("READY", "INCONCLUSIVE_RETRY", "UNAVAILABLE_RETRY"),
+                "day_status": self._day_status(p), "cancellation_status": cancellation_status,
+                "unresolved_source": self._day_result(p).unresolved_source,
+                "unresolved_class": self._day_result(p).unresolved_class,
+                "cancellation_eligible_at": self._cancellation_eligible_at(p),
                 "can_cancel": cancellation_status == "READY",
                 "can_claim": self._claim_status(p) == "READY"}
 
@@ -649,7 +808,7 @@ class CommodaProtection(gl.Contract):
         if start < 0 or start > count or limit <= 0 or limit > MAX_ATTENTION_PAGE:
             _err("[EXPECTED]", "invalid attention pagination")
         end = min(count, start + limit)
-        ready, retry, cancellation_ready = 0, 0, 0
+        ready, retry, unavailable_retry, cancellation_ready = 0, 0, 0, 0
         for i in range(start, end):
             protection_id = self.owner_index.get(owner_key + "|" + str(i))
             if protection_id is None:
@@ -660,6 +819,8 @@ class CommodaProtection(gl.Contract):
                 ready += 1
             elif status == "INCONCLUSIVE_RETRY":
                 retry += 1
+            elif status == "UNAVAILABLE_RETRY":
+                unavailable_retry += 1
             if self._cancellation_status(p, False) == "READY":
                 cancellation_ready += 1
         stats = self.user_stats.get(owner_key, UserStats(0, 0, 0, 0, 0, 0, 0, 0, 0))
@@ -668,9 +829,11 @@ class CommodaProtection(gl.Contract):
                 "scanned": end - start, "next_start": end if has_more else -1,
                 "has_more": has_more, "ready_to_settle": ready,
                 "inconclusive_retry": retry,
+                "unavailable_retry": unavailable_retry,
                 "cancellation_ready": cancellation_ready,
                 "ready_to_settle_scope": "page",
                 "inconclusive_retry_scope": "page",
+                "unavailable_retry_scope": "page",
                 "cancellation_ready_scope": "page",
                 "lifecycle_totals_scope": "global_user_stats",
                 "claimable": int(stats.claimable), "active": int(stats.active),
@@ -701,18 +864,24 @@ class CommodaProtection(gl.Contract):
             _date_parts(requested_date)
         reason = self._settlement_status(p, requested_date, True)
         return {"protection_id": int(protection_id), "date": p.next_date, "status": reason,
-                "can_settle": reason == "READY" or reason == "INCONCLUSIVE_RETRY",
-                "retry_required": reason == "INCONCLUSIVE_RETRY", "protection_state": p.state}
+                "can_settle": reason in ("READY", "INCONCLUSIVE_RETRY", "UNAVAILABLE_RETRY"),
+                "retry_required": reason in ("INCONCLUSIVE_RETRY", "UNAVAILABLE_RETRY"),
+                "protection_state": p.state, "day_status": self._day_status(p)}
 
     @gl.public.view
     def cancellation_readiness(self, protection_id: u256) -> dict:
         p = self._protection(protection_id)
-        unresolved_number = _date_parts(p.next_date)[3]
-        eligible_date = _date(unresolved_number + 1 + TERMINAL_GRACE_DAYS)
         status = self._cancellation_status(p, True)
+        eligible_at = self._cancellation_eligible_at(p)
+        result = self._day_result(p)
         return {"protection_id": int(protection_id), "protection_state": p.state,
-                "unresolved_date": p.next_date, "day_status": self._day_status(p),
-                "terminal_grace_days": TERMINAL_GRACE_DAYS, "eligible_date": eligible_date,
+                "unresolved_date": p.next_date, "day_status": result.status,
+                "first_unresolved_at": result.first_unresolved_at,
+                "terminal_grace_days": TERMINAL_GRACE_DAYS,
+                "eligible_date": eligible_at[:10] if eligible_at != "" else "",
+                "eligible_at": eligible_at,
+                "unresolved_source": result.unresolved_source,
+                "unresolved_class": result.unresolved_class,
                 "status": status, "can_cancel": status == "READY"}
 
     @gl.public.view
@@ -795,7 +964,7 @@ class CommodaProtection(gl.Contract):
         self.owner_counts[owner] = index + 1
         if index == 0:
             self.user_stats[owner] = UserStats(0, 0, 0, 0, 0, 0, 0, 0, 0)
-        self.days[_day_key(pid, p.next_date)] = DayResult(UNPROCESSED, 0, now)
+        self.days[_day_key(pid, p.next_date)] = DayResult(UNPROCESSED, 0, now, "", "", "")
         self.protection_count += 1
         self.pool_balance += premium
         self.reserved_liability += payout
@@ -816,40 +985,17 @@ class CommodaProtection(gl.Contract):
         if p.next_date >= _today():
             _err("[EXPECTED]", "settlement day incomplete")
         day_key = _day_key(protection_id, p.next_date)
-        prior = self.days.get(day_key, DayResult(UNPROCESSED, 0, ""))
+        prior = self.days.get(day_key, DayResult(UNPROCESSED, 0, "", "", "", ""))
         # A BREACHED/NOT_BREACHED day is final for this protection. Only an
-        # UNPROCESSED or INCONCLUSIVE day may refresh shared evidence, and a
+        # unresolved day may refresh shared evidence, and a
         # later version never reopens or rewrites a conclusive day result.
-        evidence = self._settle_evidence(p.market, p.next_date, prior.status == INCONCLUSIVE)
-        b = evidence.binance_close <= p.trigger_price
-        g = evidence.gate_close <= p.trigger_price
-        result = BREACHED if b and g else NOT_BREACHED if not b and not g else INCONCLUSIVE
-        self.days[day_key] = DayResult(result, evidence.version, _now())
-        p.last_result = result
-        if result == INCONCLUSIVE:
-            self.protections[protection_id] = p
-            return result
-        if result == BREACHED:
-            p.breach_date = p.next_date
-            old = p.state
-            p.state = CLAIMABLE
-            self._state(p, old, p.state)
-            stats = self.user_stats[_address_key(p.owner)]
-            stats.claimable_payout += p.payout
-            self.user_stats[_address_key(p.owner)] = stats
-        else:
-            p.settled_days += 1
-            if p.settled_days >= p.duration:
-                old = p.state
-                p.state = EXPIRED
-                self.reserved_liability -= p.payout
-                self._state(p, old, p.state)
-                self._invariant()
-            else:
-                p.next_date = _date(_date_parts(p.next_date)[3] + 1)
-                self.days[_day_key(protection_id, p.next_date)] = DayResult(UNPROCESSED, 0, _now())
-        self.protections[protection_id] = p
-        return p.state
+        evidence_result = self._settle_evidence(p.market, p.next_date, prior.status in (INCONCLUSIVE, UNAVAILABLE))
+        now = _now()
+        if evidence_result["kind"] == "UNRESOLVED":
+            self._record_unresolved(protection_id, p, prior, evidence_result, now)
+            return UNAVAILABLE
+        outcome = self._apply_evidence_result(protection_id, p, prior, evidence_result, now)
+        return outcome if outcome == INCONCLUSIVE else p.state
 
     @gl.public.write
     def cancel_unresolved_protection(self, protection_id: u256) -> None:
@@ -858,16 +1004,31 @@ class CommodaProtection(gl.Contract):
         if p.state != ACTIVE:
             _err("[EXPECTED]", "protection not active")
 
-        day_status = self._day_status(p)
-        if day_status not in (UNPROCESSED, INCONCLUSIVE):
+        day_result = self._day_result(p)
+        if day_result.status == UNPROCESSED or day_result.first_unresolved_at == "":
+            _err("[EXPECTED]", "settlement attempt required")
+        if day_result.status not in (INCONCLUSIVE, UNAVAILABLE):
             _err("[EXPECTED]", "settlement day conclusive")
 
         unresolved_number = _date_parts(p.next_date)[3]
         today_number = _date_parts(_today())[3]
         if today_number <= unresolved_number:
             _err("[EXPECTED]", "settlement day incomplete")
-        if today_number < unresolved_number + 1 + TERMINAL_GRACE_DAYS:
+        if _timestamp_epoch(_now()) < _timestamp_epoch(day_result.first_unresolved_at) + TERMINAL_GRACE_DAYS * DAY:
             _err("[EXPECTED]", "terminal grace period active")
+
+        # A recorded unresolved result starts the grace period, but does not
+        # grant a refund against newer evidence. Recheck the same internally
+        # derived day immediately before terminal accounting.
+        prior = day_result
+        evidence_result = self._settle_evidence(p.market, p.next_date, True)
+        now = _now()
+        if evidence_result["kind"] == "UNRESOLVED":
+            self._record_unresolved(protection_id, p, prior, evidence_result, now)
+        else:
+            outcome = self._apply_evidence_result(protection_id, p, prior, evidence_result, now)
+            if outcome in (BREACHED, NOT_BREACHED):
+                return
 
         if p.payout > self.reserved_liability:
             _err("[EXPECTED]", "insufficient reserved balance")

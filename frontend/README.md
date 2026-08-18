@@ -2,6 +2,8 @@
 
 Build a serious production-quality frontend for a GenLayer commodity price-drop protection protocol called COMMODA. This is the main frontend project, not a demo. Use React/TypeScript with Tailwind/shadcn and responsive design. Do not build a backend/database yet. Focus on polished frontend architecture and UX, with contract-backed reads and writes isolated behind a service layer.
 
+Production deployment: GenLayer Bradbury Testnet (chain ID `4221`), Commoda contract `0x35D3a7EbF3c76d4bAF531d87191dAe9859854b1e`.
+
 PRODUCT
 Commoda is fixed-payout commodity downside protection. Supported markets: WTI Crude Oil, Brent Crude Oil, Natural Gas. Users choose commodity, drop threshold (1%, 2%, 3%), duration (7, 14, 30 days), pay a fixed GEN premium, and receive a fixed GEN payout if both settlement sources confirm price <= stored trigger on a covered day. Product copy should say “price drop protection” / “drop protection”, not generic trading. Keep language clear and non-casino-like.
 
@@ -9,7 +11,7 @@ TERMS
 7 days: premium 1 GEN; payout 2/3/4 GEN for 1/2/3% drop.
 14 days: premium 2 GEN; payout 4/5/6 GEN.
 30 days: premium 3 GEN; payout 6/8/10 GEN.
-Purchase reference price comes from Gate and is locked at purchase. Settlement uses Binance + Gate historical daily closes. States: ACTIVE, CLAIMABLE, EXPIRED, CLAIMED, CANCELLED. Day results: UNPROCESSED, BREACHED, NOT_BREACHED, INCONCLUSIVE.
+Purchase reference price comes from Gate and is locked at purchase. Settlement uses Binance + Gate historical daily closes. States: ACTIVE, CLAIMABLE, EXPIRED, CLAIMED, CANCELLED. Day results: UNPROCESSED (waiting to be checked), BREACHED, NOT_BREACHED, INCONCLUSIVE (sources disagree), and UNAVAILABLE (consensus-verified inability to obtain valid source evidence, with a bound source/failure category).
 
 DESIGN DIRECTION — based on the reference screenshots I supplied in chat
 Blend the strongest parts of Descartes Underwriting and our earlier Hedgix interface, but make Commoda visually distinct.
@@ -67,13 +69,13 @@ Use correct economics from the table above. Any trigger preview must be labelled
 Add transaction review modal with exact premium, payout, selected terms, source explanation, and wallet confirmation state.
 
 DASHBOARD
-Institutional risk dashboard, not a crypto toy. Top summary: Active, Claimable, Expired, Cancelled, Total Premiums, Total Payouts. Protection cards/table with ID, Market, Drop, Reference, Trigger, Duration, Settled Days, Next Settlement Date, State, Last Result. Clear state badges. Detail drawer/page for one protection with daily settlement timeline and evidence summary. Buttons: Settle (when ready), Cancel & Refund (when eligible), Claim Payout (when claimable). Include accepted transaction state handling.
+Institutional risk dashboard, not a crypto toy. Top summary: Active, Claimable, Expired, Cancelled, Total Premiums, Total Payouts. Protection cards/table with ID, Market, Drop, Reference, Trigger, Duration, Settled Days, Next Settlement Date, State, Last Result. Clear state badges. Detail drawer/page for one protection with daily settlement timeline and evidence summary. Buttons: Settle (when ready), Check & Refund (when eligible; a final recheck may settle normally), Claim Payout (when claimable). Claim/refund transactions show Accepted → Awaiting Finality → Finalized; CLAIMED/CANCELLED are lifecycle states, while Paid/Premium refunded wording appears only after finalized receipt proof.
 
 MARKETS
 Three large market cards / detail sections for WTI, Brent, Natural Gas. Explain each market, available drop levels and durations, and source symbols. Protocol terms and state come from the contract service; any live market ticker is informational only.
 
 HOW IT WORKS
-Editorial explainer: Purchase reference → Coverage days → Daily settlement → Breach / Not breached / Inconclusive → Claim, expiry or terminal cancellation/refund. Explain that both Binance and Gate must be on the breach side for BREACHED; disagreement is INCONCLUSIVE and retried. Use diagrams/cards, not long walls of text.
+Editorial explainer: Purchase reference → Coverage days → Daily settlement → Breach / Not breached / Inconclusive / Unavailable → Claim, expiry or terminal cancellation/refund. Explain that both Binance and Gate must be on the breach side for BREACHED; disagreement is INCONCLUSIVE and retried, while consensus-verified inability to obtain valid source evidence is UNAVAILABLE and retried. An untouched UNPROCESSED day must be attempted before terminal cancellation; after the first unresolved attempt, the three-day grace is measured from its recorded timestamp. Cancellation performs one final consensus recheck: conclusive evidence settles normally and only still-unresolved evidence is refunded. Use diagrams/cards, not long walls of text.
 
 TRANSPARENCY
 Show contract-derived pool state, contract architecture, market source table, settlement rule, and links for Contract Explorer and GitHub. Include a section “What validators verify” explaining that validators independently fetch the external market evidence; they are not just checking JSON formatting.

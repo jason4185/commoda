@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,13 +12,16 @@ import {
   canCancelProtection,
   canClaimProtection,
   commodaService,
+  getFinancialTransferLabel,
   getSettlementAction,
 } from "@/lib/commoda/service";
 import { MARKETS, priceDigits } from "@/lib/commoda/markets";
 import { dateLabel, gen, usd } from "@/lib/commoda/format";
-import type { Protection } from "@/lib/commoda/types";
+import type { FinancialFinality, Protection } from "@/lib/commoda/types";
+import { GENLAYER_CHAIN } from "@/lib/commoda/config";
 import { useWallet } from "@/lib/commoda/wallet";
 import { useTransactionManager } from "@/lib/commoda/transaction-context";
+import { clearPendingFinancialTransaction, getPendingFinancialStatus, getPendingFinancialTransactions, type PendingFinancialTx } from "@/lib/commoda/contract";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -53,6 +56,7 @@ function DashboardPage() {
     id: string;
     kind: "settle" | "cancel" | "claim";
   } | null>(null);
+  const [financialRecords, setFinancialRecords] = useState<PendingFinancialTx[]>([]);
 
   const invalidate = (id?: string) => {
     queryClient.invalidateQueries({ queryKey: qk.protections(owner) });
@@ -62,13 +66,46 @@ function DashboardPage() {
     if (id) queryClient.invalidateQueries({ queryKey: qk.protection(id, owner) });
   };
 
+  useEffect(() => {
+    let disposed = false;
+    const refreshPending = async () => {
+      if (!owner) {
+        setFinancialRecords([]);
+        return;
+      }
+      const stored = getPendingFinancialTransactions(owner);
+      const live: PendingFinancialTx[] = [];
+      let settled = false;
+      for (const item of stored) {
+        const status = await getPendingFinancialStatus(item.txHash);
+        if (status === "PENDING") live.push({ ...item, status: "PENDING" });
+        else if (status === "FAILED") live.push({ ...item, status: "FAILED" });
+        else if (status === "UNAVAILABLE") live.push({ ...item, status: "UNAVAILABLE" });
+        else {
+          live.push({ ...item, status: "FINALIZED" });
+          clearPendingFinancialTransaction(item.txHash);
+          settled = true;
+        }
+      }
+      if (disposed) return;
+      setFinancialRecords((current) => [
+        ...current.filter((item) => item.status === "FINALIZED" && !live.some((next) => next.protectionId === item.protectionId)),
+        ...live,
+      ]);
+      if (settled) invalidate();
+    };
+    void refreshPending();
+    const timer = window.setInterval(() => void refreshPending(), 5_000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [owner, queryClient]);
+
   const settle = useMutation({
     mutationFn: (id: string) => commodaService.settleNextDay(id, transaction.update),
     onMutate: (id) => { setPendingAction({ id, kind: "settle" }); const target = allProtections.find((item) => item.id === id); transaction.begin(target && getSettlementAction(target) === "RETRY" ? "Retrying settlement" : "Settling protection", "settle_protection"); },
     onSuccess: (p) => {
       invalidate(p.id);
       const last = [...p.days].reverse().find((d) => d.result !== "UNPROCESSED");
-      transaction.setOutcome(last ? ({ NOT_BREACHED: "No protected drop", BREACHED: "Protected price reached", INCONCLUSIVE: "Checking again required", UNPROCESSED: "Waiting" }[last.result]) : "Settlement accepted.");
+      transaction.setOutcome(last ? ({ NOT_BREACHED: "No protected drop", BREACHED: "Protected price reached", INCONCLUSIVE: "Sources disagree; retry settlement when ready", UNAVAILABLE: "Source data unavailable; retry settlement when ready", UNPROCESSED: "Waiting to be checked" }[last.result]) : "Settlement accepted.");
     },
     onError: (e: Error) => { if (transaction.progress.stage !== "accepted") transaction.fail(e); toast.error("Settlement failed", { description: e.message }); },
     onSettled: () => setPendingAction(null),
@@ -77,9 +114,15 @@ function DashboardPage() {
   const claim = useMutation({
     mutationFn: (id: string) => commodaService.claim(id, transaction.update),
     onMutate: (id) => { setPendingAction({ id, kind: "claim" }); transaction.begin("Claiming payout", "claim_payout"); },
-    onSuccess: (p) => {
-      invalidate(p.id);
-      transaction.setOutcome(`Payout of ${gen(p.payout)} was accepted.`);
+    onSuccess: ({ protection: p, finalized, hash }) => {
+      setFinancialRecords((current) => [
+        ...current.filter((item) => item.protectionId !== p.id),
+        ...(finalized
+          ? [{ txHash: hash, action: "CLAIM" as const, protectionId: p.id, account: owner, chainId: GENLAYER_CHAIN.id, status: "FINALIZED" as const }]
+          : getPendingFinancialTransactions(owner).filter((item) => item.protectionId === p.id)),
+      ]);
+      if (finalized) invalidate(p.id);
+      transaction.setOutcome(finalized ? `Payout of ${gen(p.payout)} is complete.` : "Accepted — awaiting finality. The payout is not complete yet.");
     },
     onError: (e: Error) => { if (transaction.progress.stage !== "accepted") transaction.fail(e); toast.error("Claim failed", { description: e.message }); },
     onSettled: () => setPendingAction(null),
@@ -87,10 +130,16 @@ function DashboardPage() {
 
   const cancel = useMutation({
     mutationFn: (id: string) => commodaService.cancelUnresolved(id, transaction.update),
-    onMutate: (id) => { setPendingAction({ id, kind: "cancel" }); transaction.begin("Refunding protection", "cancel_unresolved_protection"); },
-    onSuccess: (p) => {
-      invalidate(p.id);
-      transaction.setOutcome(`Original premium of ${gen(p.premium)} was refunded.`);
+    onMutate: (id) => { setPendingAction({ id, kind: "cancel" }); transaction.begin("Checking terminal resolution", "cancel_unresolved_protection"); },
+    onSuccess: ({ protection: p, finalized, hash }) => {
+      setFinancialRecords((current) => [
+        ...current.filter((item) => item.protectionId !== p.id),
+        ...(finalized
+          ? [{ txHash: hash, action: "REFUND" as const, protectionId: p.id, account: owner, chainId: GENLAYER_CHAIN.id, status: "FINALIZED" as const }]
+          : getPendingFinancialTransactions(owner).filter((item) => item.protectionId === p.id)),
+      ]);
+      if (finalized) invalidate(p.id);
+      transaction.setOutcome(!finalized ? "Accepted — awaiting finality. The financial result is not complete yet." : p.state === "CANCELLED" ? `Original premium of ${gen(p.premium)} is refunded.` : "Settlement evidence became conclusive; no refund was issued.");
     },
     onError: (e: Error) => { if (transaction.progress.stage !== "accepted") transaction.fail(e); toast.error("Cancellation failed", { description: e.message }); },
     onSettled: () => setPendingAction(null),
@@ -117,7 +166,7 @@ function DashboardPage() {
     { label: "Payouts received", value: userSummary ? gen(Number(userSummary.payouts) / 1e18) : gen(0) },
   ];
 
-  const attention = allProtections.filter((p) => getSettlementAction(p) !== "NONE" || canClaimProtection(p) || canCancelProtection(p));
+  const attention = allProtections.filter((p) => !financialRecords.some((item) => item.protectionId === p.id && item.status !== "FINALIZED") && (getSettlementAction(p) !== "NONE" || canClaimProtection(p) || canCancelProtection(p)));
 
   return (
     <div className="bg-porcelain">
@@ -187,8 +236,8 @@ function DashboardPage() {
                       const cancellation = canCancelProtection(p);
                       const label = canClaimProtection(p)
                         ? "Payout ready"
-                        : cancellation
-                          ? "Resolution refund"
+                          : cancellation
+                          ? "Final resolution check"
                         : action === "RETRY"
                           ? "Settlement retry"
                           : "Settlement ready";
@@ -196,7 +245,7 @@ function DashboardPage() {
                         <button key={p.id} onClick={() => setSelectedId(p.id)} className="border border-border p-4 text-left hover:border-navy/35">
                           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate">{label}</p>
                         <p className="mt-2 font-semibold text-navy-deep">{MARKETS[p.market].name}</p>
-                          <p className="mt-3 text-sm text-amber">{canClaimProtection(p) ? "Claim Payout" : cancellation ? "Cancel & Refund" : action === "RETRY" ? "Retry Settlement" : "Settle Now"}</p>
+                          <p className="mt-3 text-sm text-amber">{canClaimProtection(p) ? "Claim Payout" : cancellation ? "Check & Refund" : action === "RETRY" ? "Retry Settlement" : "Settle Now"}</p>
                         </button>
                       );
                     })}
@@ -219,6 +268,7 @@ function DashboardPage() {
                   onCancel={() => cancel.mutate(p.id)}
                   onClaim={() => claim.mutate(p.id)}
                   pendingAction={pendingAction}
+                  pendingFinancial={financialRecords}
                 />
               ))}
               </div>
@@ -239,6 +289,7 @@ function DashboardPage() {
         onCancel={(id) => cancel.mutate(id)}
         onClaim={(id) => claim.mutate(id)}
         pendingAction={pendingAction}
+        pendingFinancial={financialRecords}
       />
     </div>
   );
@@ -251,6 +302,7 @@ function ProtectionRow({
   onCancel,
   onClaim,
   pendingAction,
+  pendingFinancial,
 }: {
   protection: Protection;
   onOpen: () => void;
@@ -258,14 +310,18 @@ function ProtectionRow({
   onCancel: () => void;
   onClaim: () => void;
   pendingAction: { id: string; kind: "settle" | "cancel" | "claim" } | null;
+  pendingFinancial: PendingFinancialTx[];
 }) {
   const market = MARKETS[p.market];
   const digits = priceDigits(p.market);
   const settled = p.settledDays;
-  const nextDay = p.state === "ACTIVE" ? p.days.find((d) => d.result === "INCONCLUSIVE") ?? p.days.find((d) => d.result === "UNPROCESSED") : undefined;
+  const nextDay = p.state === "ACTIVE" ? p.days.find((d) => d.result === "INCONCLUSIVE" || d.result === "UNAVAILABLE") ?? p.days.find((d) => d.result === "UNPROCESSED") : undefined;
   const action = getSettlementAction(p);
   const lastResult = [...p.days].reverse().find((d) => d.result !== "UNPROCESSED");
-  const busy = pendingAction?.id === p.id;
+  const financial = pendingFinancial.find((item) => item.protectionId === p.id);
+  const finality: FinancialFinality = financial ? financial.status ?? "PENDING" : "UNKNOWN";
+  const pending = financial && finality !== "FINALIZED" ? financial : undefined;
+  const busy = pendingAction?.id === p.id || Boolean(pending);
 
   return (
     <article className="rounded-xl border border-border bg-card p-5 transition-shadow hover:shadow-elegant">
@@ -278,7 +334,7 @@ function ProtectionRow({
             >
               {market.name}
             </button>
-            <StateBadge state={p.state} />
+            <StateBadge state={p.state} financialFinality={finality} />
             {lastResult ? <ResultBadge result={lastResult.result} /> : null}
           </div>
 
@@ -299,11 +355,10 @@ function ProtectionRow({
           <Button variant="ghost" onClick={onOpen}>
             Details
           </Button>
-          {action !== "NONE" ? <Button variant="outline" disabled={busy} onClick={onSettle}>{busy && pendingAction?.kind === "settle" ? <><Loader2 className="animate-spin" /> Checking…</> : action === "RETRY" ? "Retry Settlement" : "Settle Now"}</Button> : null}
-          {canCancelProtection(p) ? <Button variant="outline" disabled={busy} onClick={onCancel}>{busy && pendingAction?.kind === "cancel" ? <><Loader2 className="animate-spin" /> Refunding…</> : "Cancel & Refund"}</Button> : null}
-          {canClaimProtection(p) ? <Button variant="accent" disabled={busy} onClick={onClaim}>{busy && pendingAction?.kind === "claim" ? <><Loader2 className="animate-spin" /> Claiming…</> : "Claim Payout"}</Button> : null}
-          {p.state === "CLAIMED" ? <span className="self-center text-sm font-semibold text-success">Paid</span> : null}
-          {p.state === "CANCELLED" ? <span className="self-center text-sm font-semibold text-warning">Premium refunded</span> : null}
+          {!pending && action !== "NONE" ? <Button variant="outline" disabled={busy} onClick={onSettle}>{busy && pendingAction?.kind === "settle" ? <><Loader2 className="animate-spin" /> Checking…</> : action === "RETRY" ? "Retry Settlement" : "Settle Now"}</Button> : null}
+          {!pending && canCancelProtection(p) ? <Button variant="outline" disabled={busy} onClick={onCancel}>{busy && pendingAction?.kind === "cancel" ? <><Loader2 className="animate-spin" /> Checking…</> : "Check & Refund"}</Button> : null}
+          {!pending && canClaimProtection(p) ? <Button variant="accent" disabled={busy} onClick={onClaim}>{busy && pendingAction?.kind === "claim" ? <><Loader2 className="animate-spin" /> Claiming…</> : "Claim Payout"}</Button> : null}
+          {pending ? <span className="self-center text-sm font-semibold text-warning">{getFinancialTransferLabel(pending.action, finality)}</span> : null}
           {p.state === "ACTIVE" && action === "NONE" && nextDay ? <span className="self-center text-xs text-slate">Next check: {dateLabel(nextDay.date)}</span> : null}
         </div>
       </div>

@@ -101,7 +101,7 @@ function TransparencyPage() {
                 },
                 {
                   t: "Claim handler",
-                  d: "Releases the fixed payout once a protection reaches the claimable state, or refunds the original premium when unresolved data reaches the terminal boundary. Payout size is fixed at purchase.",
+                  d: "Releases the fixed payout once a protection reaches the claimable state, or performs a final unresolved-data recheck at the terminal boundary and refunds the original premium only if the day remains unresolved. Payout size is fixed at purchase.",
                 },
               ].map((i) => (
                 <li key={i.t} className="rounded-xl border border-border bg-card p-5">
@@ -145,7 +145,7 @@ function TransparencyPage() {
             <div className="mt-8 rounded-xl border border-navy/15 bg-navy/5 p-6">
               <h3 className="text-sm font-semibold text-navy-deep">How a day is settled</h3>
               <p className="mt-2 text-sm leading-relaxed text-slate">
-                A covered day is marked <strong className="text-danger">Protected price reached</strong> only when both daily closing prices are at or below your protected price. If both are above it, the day is marked <strong className="text-success">No protected drop</strong>. If the sources disagree or one is unavailable, the day stays open and is checked again. If the earliest unresolved day remains inconclusive or unavailable after the bounded resolution window, the protection can be cancelled and its original premium refunded; no payout is made.
+                A covered day is marked <strong className="text-danger">Protected price reached</strong> only when both daily closing prices are at or below your protected price. If both are above it, the day is marked <strong className="text-success">No protected drop</strong>. If the sources disagree, the day is <strong>INCONCLUSIVE</strong>; if valid evidence cannot be obtained by validator agreement, it is <strong>UNAVAILABLE</strong>. Both remain open and can be retried. An untouched <strong>UNPROCESSED</strong> day cannot be cancelled; after a recorded unresolved attempt and its bounded grace window, a final recheck may cancel the protection only if the day remains unresolved, refunding its original premium with no payout.
               </p>
             </div>
           </div>
@@ -165,7 +165,7 @@ function TransparencyPage() {
               "They check both market sources — Validators independently fetch the daily closing prices from Binance and Gate.",
               "They compare prices with your protected price — The prices are checked against the protection level recorded when you purchased.",
               "Settlement only completes after agreement — A result is accepted only when validators agree on the outcome.",
-              "Disagreement means the day is checked again — If the data does not agree, Commoda does not guess. That settlement day remains unresolved, can be retried for three complete UTC days, and may then be cancelled with the original premium refunded.",
+              "Disagreement means the day is checked again — If the data does not agree, Commoda does not guess. That settlement day remains unresolved and can be retried. Terminal cancellation requires this recorded unresolved attempt and three complete UTC days from the first attempt; the final cancellation call rechecks the day and refunds only if it is still unresolved; untouched days cannot be cancelled.",
             ].map((t) => (
               <li
                 key={t}

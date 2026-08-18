@@ -12,9 +12,10 @@ import { Button } from "@/components/ui/button";
 import { ResultBadge, StateBadge } from "@/components/commoda/StateBadge";
 import { MARKETS, priceDigits } from "@/lib/commoda/markets";
 import { dateLabel, gen, shortDate, usd } from "@/lib/commoda/format";
-import { canCancelProtection, canClaimProtection, getDayResultLabel, getSettlementAction } from "@/lib/commoda/service";
+import { canCancelProtection, canClaimProtection, getDayResultLabel, getFinancialTransferLabel, getProtectionStatusLabel, getSettlementAction } from "@/lib/commoda/service";
 import { settlementEvidenceQuery } from "@/lib/commoda/queries";
 import type { Protection } from "@/lib/commoda/types";
+import type { PendingFinancialTx } from "@/lib/commoda/contract";
 
 interface Props {
   protection: Protection | null;
@@ -24,6 +25,7 @@ interface Props {
   onCancel: (id: string) => void;
   onClaim: (id: string) => void;
   pendingAction: { id: string; kind: "settle" | "cancel" | "claim" } | null;
+  pendingFinancial: PendingFinancialTx[];
 }
 
 export function ProtectionDrawer({
@@ -34,6 +36,7 @@ export function ProtectionDrawer({
   onCancel,
   onClaim,
   pendingAction,
+  pendingFinancial,
 }: Props) {
   if (!protection) return null;
   const market = MARKETS[protection.market];
@@ -42,7 +45,10 @@ export function ProtectionDrawer({
   const settlementAction = getSettlementAction(protection);
   const canCancel = canCancelProtection(protection);
   const canClaim = canClaimProtection(protection);
-  const busy = pendingAction?.id === protection.id;
+  const financial = pendingFinancial.find((item) => item.protectionId === protection.id);
+  const finality = financial ? financial.status ?? "PENDING" : "UNKNOWN";
+  const pending = financial && finality !== "FINALIZED" ? financial : undefined;
+  const busy = pendingAction?.id === protection.id || Boolean(pending);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -50,7 +56,7 @@ export function ProtectionDrawer({
         <SheetHeader className="border-b border-border pb-5">
           <div className="flex items-center gap-3">
             <SheetTitle className="text-navy-deep">{market.name}</SheetTitle>
-            <StateBadge state={protection.state} />
+            <StateBadge state={protection.state} financialFinality={finality} />
           </div>
           <SheetDescription>
             {market.name} · {protection.drop}% drop · {protection.duration} days
@@ -68,9 +74,9 @@ export function ProtectionDrawer({
           </dl>
 
           <div className="flex flex-wrap gap-3">
-            {settlementAction !== "NONE" ? <Button variant="outline" disabled={busy} onClick={() => onSettle(protection.id)}>{busy && pendingAction?.kind === "settle" ? <><Loader2 className="animate-spin" /> Checking…</> : settlementAction === "RETRY" ? "Retry Settlement" : "Settle Now"}</Button> : null}
-            {canCancel ? <Button variant="outline" disabled={busy} onClick={() => onCancel(protection.id)}>{busy && pendingAction?.kind === "cancel" ? <><Loader2 className="animate-spin" /> Refunding…</> : "Cancel & Refund"}</Button> : null}
-            {canClaim ? <Button variant="accent" disabled={busy} onClick={() => onClaim(protection.id)}>
+            {!pending && settlementAction !== "NONE" ? <Button variant="outline" disabled={busy} onClick={() => onSettle(protection.id)}>{busy && pendingAction?.kind === "settle" ? <><Loader2 className="animate-spin" /> Checking…</> : settlementAction === "RETRY" ? "Retry Settlement" : "Settle Now"}</Button> : null}
+            {!pending && canCancel ? <Button variant="outline" disabled={busy} onClick={() => onCancel(protection.id)}>{busy && pendingAction?.kind === "cancel" ? <><Loader2 className="animate-spin" /> Checking…</> : "Check & Refund"}</Button> : null}
+            {!pending && canClaim ? <Button variant="accent" disabled={busy} onClick={() => onClaim(protection.id)}>
               {busy && pendingAction?.kind === "claim" ? (
                 <>
                   <Loader2 className="animate-spin" /> Claiming…
@@ -79,12 +85,13 @@ export function ProtectionDrawer({
                 "Claim Payout"
               )}
             </Button> : null}
-            {protection.state === "CLAIMED" ? <span className="self-center text-sm font-semibold text-success">Paid</span> : null}
-            {protection.state === "CANCELLED" ? <span className="self-center text-sm font-semibold text-warning">Premium refunded</span> : null}
+            {pending ? <span className="self-center text-sm font-semibold text-warning">{getFinancialTransferLabel(pending.action, finality)}</span> : null}
           </div>
 
-          {canCancel ? <p className="border border-warning/25 bg-warning/8 px-4 py-3 text-sm leading-relaxed text-slate">Market data could not be conclusively verified within the allowed resolution period. You can cancel this protection and receive the original premium back; no payout will be made.</p> : null}
-          {protection.state === "CANCELLED" ? <p className="border border-warning/25 bg-warning/8 px-4 py-3 text-sm leading-relaxed text-slate">Market data could not be conclusively verified within the allowed resolution period. The original premium was refunded; no payout was made.</p> : null}
+          {canCancel ? <p className="border border-warning/25 bg-warning/8 px-4 py-3 text-sm leading-relaxed text-slate">Market data could not be conclusively verified within the allowed resolution period. Request a final recheck; if the day remains unresolved, the original premium will be refunded and no payout will be made.</p> : null}
+          {protection.state === "ACTIVE" && protection.cancellationStatus === "SETTLEMENT_ATTEMPT_REQUIRED" ? <p className="border border-border bg-sand/50 px-4 py-3 text-sm leading-relaxed text-slate">Settlement must be attempted before terminal cancellation can be considered.</p> : null}
+          {protection.state === "CLAIMED" ? <p className="border border-success/25 bg-success/8 px-4 py-3 text-sm leading-relaxed text-slate">{getProtectionStatusLabel(protection.state, finality)}. {finality === "FINALIZED" ? "The payout transfer has finalized." : finality === "PENDING" ? "The payout transfer is awaiting finality." : finality === "FAILED" || finality === "UNAVAILABLE" ? "Payout transfer status is unavailable." : "Payout finality has not been verified in this browser."}</p> : null}
+          {protection.state === "CANCELLED" ? <p className="border border-warning/25 bg-warning/8 px-4 py-3 text-sm leading-relaxed text-slate">Market data could not be conclusively verified within the allowed resolution period. {finality === "FINALIZED" ? "The original premium was refunded; no payout was made." : finality === "PENDING" ? "Cancellation was accepted; the refund transfer is awaiting finality." : finality === "FAILED" || finality === "UNAVAILABLE" ? "Cancellation was accepted; refund transfer status is unavailable." : "Cancellation was accepted; refund finality has not been verified in this browser."}</p> : null}
 
           <div>
             <h3 className="text-sm font-semibold text-navy-deep">Daily settlement timeline</h3>

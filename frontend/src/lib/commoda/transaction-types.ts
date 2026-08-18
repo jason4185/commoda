@@ -1,4 +1,7 @@
-export type TransactionStage = "preparing" | "awaiting_wallet" | "submitted" | "processing" | "accepted" | "failed";
+export type TransactionStage = "preparing" | "awaiting_wallet" | "submitted" | "processing" | "accepted" | "awaiting_finality" | "finalized" | "failed";
+
+export const FINALITY_REQUIRED_METHODS = new Set(["claim_payout", "cancel_unresolved_protection"]);
+export function requiresFinality(method?: string) { return method ? FINALITY_REQUIRED_METHODS.has(method) : false; }
 
 export type TransactionProgressUpdate = {
   stage: TransactionStage;
